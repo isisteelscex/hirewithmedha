@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hire with Medhā</title>
-<!-- build: 2026-04-21-v6 getUserName resolves real tenant members first, legacy fallback -->
+<!-- build: 2026-04-21-v7 all 20 mutation functions async-hardened with proper save-await and error toasts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1242,7 +1242,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-21-v6';
+const HWM_BUILD = '2026-04-21-v7';
 console.log('%cHire with Medhā', 'color:#00338d;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -2078,6 +2078,105 @@ async function saveSingleRequisition(r) {
   }
   toast('Saved');
   return r;
+}
+
+// Helper for state-mutation actions (approve/reject/hold/cancel/etc). Persists
+// the specific requisition, logs activity, and navigates on success. On error,
+// shows a toast and leaves the user on the current view so they can retry.
+// Any action function that previously did `saveData('requisitions', requisitions); logActivity(...); setView('dashboard')`
+// can now just do `await persistReqChange(r, 'activity text')`.
+async function persistReqChange(r, activityText, options = {}) {
+  try {
+    await saveSingleRequisition(r);
+    if (activityText) {
+      logActivity(r.id, activityText);
+      await saveData('activities', activities);
+    }
+    if (options.closeModal !== false) closeModal();
+    if (options.nextView !== null) setView(options.nextView || 'dashboard');
+    return true;
+  } catch (e) {
+    console.error('persistReqChange failed:', e);
+    toast('Failed to save: ' + (e.message || e), true);
+    return false;
+  }
+}
+
+// Targeted insert/update for ONE candidate + its application row. Mirror of
+// saveSingleRequisition but for candidates. Awaitable.
+async function saveSingleCandidate(c) {
+  const candPayload = {
+    tenant_id: currentTenantId,
+    full_name: c.name,
+    email: c.email,
+    phone: c.phone,
+    source: (c.source || '').toLowerCase().replace(/ /g, '_') || 'other',
+    cv_filename: c.cvFilename,
+    notes: c.notes,
+    created_by: currentAuthUser?.id,
+  };
+  if (c._dbId) {
+    const { error } = await sb.from('candidates').update(candPayload).eq('id', c._dbId);
+    if (error) throw error;
+  } else {
+    const { data, error } = await sb.from('candidates').insert(candPayload).select().single();
+    if (error) throw error;
+    c._dbId = data.id;
+  }
+
+  // Application row (one-to-one per candidate+req pair)
+  const req = requisitions.find(r => r.id === c.reqId);
+  if (!req || !req._dbId) { toast('Saved'); return c; }
+  const appPayload = {
+    tenant_id: currentTenantId,
+    requisition_id: req._dbId,
+    candidate_id: c._dbId,
+    candidate_stage: c.stage,
+    status: c.status || 'active',
+    applied_at: c.addedAt,
+    stage_changed_at: c.stageChangedAt,
+    created_by: currentAuthUser?.id,
+    checks_reference: !!c.preEmploymentChecks?.reference,
+    checks_background: !!c.preEmploymentChecks?.background,
+    checks_criminal: !!c.preEmploymentChecks?.criminal,
+    checks_education: !!c.preEmploymentChecks?.education,
+    checks_notes: c.preEmploymentChecks?.notes || null,
+    offer_salary: c.offer?.salary ?? null,
+    offer_grade: c.offer?.grade ?? null,
+    offer_start_date: c.offer?.startDate ?? null,
+    offer_benefits: c.offer?.benefits ?? null,
+    offer_notes: c.offer?.notes ?? null,
+    offer_sent_at: c.offer?.sentAt ?? null,
+    offer_status: c.offer?.status ?? null,
+  };
+  if (c._appDbId) {
+    const { error } = await sb.from('applications').update(appPayload).eq('id', c._appDbId);
+    if (error) throw error;
+  } else {
+    const { data, error } = await sb.from('applications').insert(appPayload).select().single();
+    if (error) throw error;
+    c._appDbId = data.id;
+  }
+  toast('Saved');
+  return c;
+}
+
+// Wrapper for candidate-side mutations (moveCandidate, rejectCandidate, etc).
+async function persistCandidateChange(c, activityText, options = {}) {
+  try {
+    await saveSingleCandidate(c);
+    if (activityText) {
+      logActivity(c.reqId, activityText);
+      await saveData('activities', activities);
+    }
+    if (options.closeModal !== false) closeModal();
+    if (options.render !== false) render();
+    return true;
+  } catch (e) {
+    console.error('persistCandidateChange failed:', e);
+    toast('Failed to save: ' + (e.message || e), true);
+    return false;
+  }
 }
 
 async function saveCandidates(list) {
@@ -3338,23 +3437,26 @@ function renderHRBPDetail(reqId) {
   `;
 }
 
-function saveField(reqId, field) {
+async function saveField(reqId, field) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   r[field] = document.getElementById(field).value;
-  saveData('requisitions', requisitions);
+  try {
+    await saveSingleRequisition(r);
+  } catch (e) {
+    console.error('saveField failed:', e);
+    toast('Field autosave failed: ' + (e.message || e), true);
+  }
 }
 
-function approveHRBP(reqId) {
+async function approveHRBP(reqId) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   const ta = document.getElementById('hrbpJustification');
   if (ta) r.hrbpJustification = ta.value;
   r.hrbpApprovedAt = new Date().toISOString();
   r.status = 'fh_approval';
-  saveData('requisitions', requisitions);
-  logActivity(reqId, 'Approved by HRBP');
-  setView('dashboard');
+  await persistReqChange(r, 'Approved by HRBP');
 }
 
 function requestRevision(reqId, from) {
@@ -3375,17 +3477,14 @@ function requestRevision(reqId, from) {
   `);
 }
 
-function submitRevision(reqId, from) {
+async function submitRevision(reqId, from) {
   const notes = document.getElementById('revisionNotes').value;
   if (!notes.trim()) { alert('Please provide revision notes'); return; }
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   r.revisionNotes = notes;
   r.status = 'revisions_requested';
-  saveData('requisitions', requisitions);
-  logActivity(reqId, `Revisions requested by ${from.toUpperCase()}`);
-  closeModal();
-  setView('dashboard');
+  await persistReqChange(r, `Revisions requested by ${from.toUpperCase()}`);
 }
 
 function rejectReq(reqId, from) {
@@ -3406,17 +3505,14 @@ function rejectReq(reqId, from) {
   `);
 }
 
-function submitRejection(reqId, from) {
+async function submitRejection(reqId, from) {
   const reason = document.getElementById('rejectionReason').value;
   if (!reason.trim()) { alert('Please provide reason'); return; }
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   r.rejectionReason = `Rejected by ${from.toUpperCase()}: ${reason}`;
   r.status = 'rejected';
-  saveData('requisitions', requisitions);
-  logActivity(reqId, `Rejected by ${from.toUpperCase()}`);
-  closeModal();
-  setView('dashboard');
+  await persistReqChange(r, `Rejected by ${from.toUpperCase()}`);
 }
 
 function closeReqModal(reqId) {
@@ -3443,14 +3539,11 @@ function closeReqModal(reqId) {
   `);
 }
 
-function confirmClose(reqId) {
+async function confirmClose(reqId) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   r.status = 'closed';
-  saveData('requisitions', requisitions);
-  logActivity(reqId, 'Requisition closed — filled');
-  closeModal();
-  setView('dashboard');
+  await persistReqChange(r, 'Requisition closed — filled');
 }
 
 // ============================================================
@@ -3471,7 +3564,7 @@ function openHoldModal(reqId) {
   `);
 }
 
-function submitHold(reqId) {
+async function submitHold(reqId) {
   const reason = document.getElementById('holdReason').value.trim();
   if (!reason) { alert('Please provide a reason'); return; }
   const r = requisitions.find(x => x.id === reqId);
@@ -3480,10 +3573,8 @@ function submitHold(reqId) {
   r.status = 'on_hold';
   r.holdReason = reason;
   r.heldAt = new Date().toISOString();
-  saveData('requisitions', requisitions);
-  logActivity(reqId, `Put on hold by requester: ${reason.length > 80 ? reason.substring(0, 80) + '…' : reason}`);
-  closeModal();
-  render();
+  const ok = await persistReqChange(r, `Put on hold by requester: ${reason.length > 80 ? reason.substring(0, 80) + '…' : reason}`, { nextView: null });
+  if (ok) render();
 }
 
 function resumeReq(reqId) {
@@ -3499,7 +3590,7 @@ function resumeReq(reqId) {
   `);
 }
 
-function confirmResume(reqId) {
+async function confirmResume(reqId) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   const prev = r.previousStatus || 'hrbp_review';
@@ -3507,10 +3598,8 @@ function confirmResume(reqId) {
   r.holdReason = null;
   r.previousStatus = null;
   r.resumedAt = new Date().toISOString();
-  saveData('requisitions', requisitions);
-  logActivity(reqId, `Resumed by requester — returned to ${getStatusLabel(prev)}`);
-  closeModal();
-  render();
+  const ok = await persistReqChange(r, `Resumed by requester — returned to ${getStatusLabel(prev)}`, { nextView: null });
+  if (ok) render();
 }
 
 function openCancelModal(reqId) {
@@ -3532,7 +3621,7 @@ function openCancelModal(reqId) {
   `);
 }
 
-function submitCancel(reqId) {
+async function submitCancel(reqId) {
   const reason = document.getElementById('cancelReason').value.trim();
   if (!reason) { alert('Please provide a reason'); return; }
   const r = requisitions.find(x => x.id === reqId);
@@ -3540,10 +3629,8 @@ function submitCancel(reqId) {
   r.status = 'cancelled';
   r.cancelReason = reason;
   r.cancelledAt = new Date().toISOString();
-  saveData('requisitions', requisitions);
-  logActivity(reqId, `Cancelled by requester: ${reason.length > 80 ? reason.substring(0, 80) + '…' : reason}`);
-  closeModal();
-  render();
+  const ok = await persistReqChange(r, `Cancelled by requester: ${reason.length > 80 ? reason.substring(0, 80) + '…' : reason}`, { nextView: null });
+  if (ok) render();
 }
 
 // ============================================================
@@ -3678,21 +3765,21 @@ function renderFHDetail(reqId) {
   `;
 }
 
-function approveFH(reqId) {
+async function approveFH(reqId) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   const ta = document.getElementById('fhJustification');
   if (ta) r.fhJustification = ta.value;
   r.fhApprovedAt = new Date().toISOString();
+  let activityText;
   if (r.approvalPath === 'ceo_required') {
     r.status = 'ceo_approval';
-    logActivity(reqId, 'Approved by Function Head — sent to CEO');
+    activityText = 'Approved by Function Head — sent to CEO';
   } else {
     r.status = 'ta_assignment';
-    logActivity(reqId, 'Approved by Function Head');
+    activityText = 'Approved by Function Head';
   }
-  saveData('requisitions', requisitions);
-  setView('dashboard');
+  await persistReqChange(r, activityText);
 }
 
 // ============================================================
@@ -3829,16 +3916,14 @@ function renderCEODetail(reqId) {
   `;
 }
 
-function approveCEO(reqId) {
+async function approveCEO(reqId) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   const ta = document.getElementById('ceoJustification');
   if (ta) r.ceoJustification = ta.value;
   r.ceoApprovedAt = new Date().toISOString();
   r.status = 'ta_assignment';
-  saveData('requisitions', requisitions);
-  logActivity(reqId, 'Approved by CEO');
-  setView('dashboard');
+  await persistReqChange(r, 'Approved by CEO');
 }
 
 // ============================================================
@@ -4017,12 +4102,12 @@ function renderTADetail(reqId) {
   `;
 }
 
-function assignRecruiters(reqId) {
+async function assignRecruiters(reqId) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return;
   const checked = Array.from(document.querySelectorAll('#recruiterList input:checked')).map(cb => cb.value);
   if (checked.length === 0) { alert('Select at least one recruiter'); return; }
-  
+
   const wasReassign = r.status === 'active_sourcing';
   r.assignedRecruiters = checked;
   if (!wasReassign) {
@@ -4030,9 +4115,34 @@ function assignRecruiters(reqId) {
     r.status = 'active_sourcing';
     r.targetFillDate = calculateTargetFillDate(r.grade, r.ceoApprovedAt || r.fhApprovedAt);
   }
-  saveData('requisitions', requisitions);
-  logActivity(reqId, wasReassign ? `Reassigned to ${checked.map(getUserName).join(', ')}` : `Assigned to ${checked.map(getUserName).join(', ')}`);
-  setView('dashboard');
+
+  const activityText = wasReassign
+    ? `Reassigned to ${checked.map(getUserName).join(', ')}`
+    : `Assigned to ${checked.map(getUserName).join(', ')}`;
+
+  // Also sync the requisition_recruiters M:N table: delete existing rows for
+  // this req, then insert the new set. Only UUIDs that map to real tenant
+  // members are persisted — legacy 'U009' etc are demo-only and can't be stored.
+  const realChecked = checked.filter(uid => realUsersByUuid[uid]);
+  if (r._dbId) {
+    try {
+      await sb.from('requisition_recruiters').delete().eq('requisition_id', r._dbId);
+      if (realChecked.length > 0) {
+        await sb.from('requisition_recruiters').insert(
+          realChecked.map(uid => ({
+            requisition_id: r._dbId,
+            user_id: uid,
+            assigned_by: currentAuthUser?.id,
+          }))
+        );
+      }
+    } catch (e) {
+      console.error('recruiter assignment sync failed:', e);
+      toast('Recruiter assignment partially saved: ' + (e.message || e), true);
+    }
+  }
+
+  await persistReqChange(r, activityText);
 }
 
 // ============================================================
@@ -4266,7 +4376,7 @@ function addCandidate(reqId) {
   `);
 }
 
-function submitCandidate(reqId) {
+async function submitCandidate(reqId) {
   const name = document.getElementById('candName').value.trim();
   const email = document.getElementById('candEmail').value.trim();
   const phone = document.getElementById('candPhone').value.trim();
@@ -4275,30 +4385,26 @@ function submitCandidate(reqId) {
   const notes = document.getElementById('candNotes').value;
   if (!name || !email || !phone || !cvFile) { alert('Fill required fields'); return; }
   if (cvFile.type !== 'application/pdf') { alert('CV must be PDF'); return; }
-  candidates.push({ id: generateCandidateId(), reqId, name, email, phone, source, cvFilename: cvFile.name, notes, stage: 'sourcing', addedAt: new Date().toISOString(), stageChangedAt: new Date().toISOString(), interview: null, feedback: [], preEmploymentChecks: {}, offer: null, status: 'active' });
-  saveData('candidates', candidates);
-  logActivity(reqId, 'New candidate added to pipeline');
-  closeModal();
-  render();
+  const newCand = { id: generateCandidateId(), reqId, name, email, phone, source, cvFilename: cvFile.name, notes, stage: 'sourcing', addedAt: new Date().toISOString(), stageChangedAt: new Date().toISOString(), interview: null, feedback: [], preEmploymentChecks: {}, offer: null, status: 'active' };
+  candidates.push(newCand);
+  const ok = await persistCandidateChange(newCand, 'New candidate added to pipeline');
+  if (!ok) candidates.pop();  // roll back on failure
 }
 
-function moveCandidate(candId, toStage) {
+async function moveCandidate(candId, toStage) {
   const c = candidates.find(x => x.id === candId);
   if (!c) return;
   c.stage = toStage;
   c.stageChangedAt = new Date().toISOString();
-  saveData('candidates', candidates);
-  logActivity(c.reqId, `Candidate moved to ${toStage.replace('preemployment', 'pre-employment check')}`);
-  render();
+  await persistCandidateChange(c, `Candidate moved to ${toStage.replace('preemployment', 'pre-employment check')}`, { closeModal: false });
 }
 
-function rejectCandidate(candId) {
+async function rejectCandidate(candId) {
   if (!confirm('Reject this candidate?')) return;
   const c = candidates.find(x => x.id === candId);
   if (!c) return;
   c.status = 'rejected';
-  saveData('candidates', candidates);
-  render();
+  await persistCandidateChange(c, null, { closeModal: false });
 }
 
 function scheduleInterview(candId) {
@@ -4324,17 +4430,14 @@ function scheduleInterview(candId) {
   `);
 }
 
-function submitInterview(candId) {
+async function submitInterview(candId) {
   const c = candidates.find(x => x.id === candId);
   const dt = document.getElementById('intDT').value;
   if (!dt) { alert('Date required'); return; }
   c.interview = { datetime: new Date(dt).toISOString(), type: document.getElementById('intType').value, interviewers: [document.getElementById('intInt').value], location: document.getElementById('intLoc').value, notes: document.getElementById('intNotes').value };
   c.stage = 'interview';
   c.stageChangedAt = new Date().toISOString();
-  saveData('candidates', candidates);
-  logActivity(c.reqId, 'Interview scheduled');
-  closeModal();
-  render();
+  await persistCandidateChange(c, 'Interview scheduled');
 }
 
 function addFeedback(candId) {
@@ -4356,14 +4459,12 @@ function addFeedback(candId) {
   `);
 }
 
-function submitFeedback(candId) {
+async function submitFeedback(candId) {
   const c = candidates.find(x => x.id === candId);
   const notes = document.getElementById('fbNotes').value.trim();
   if (!notes) { alert('Notes required'); return; }
   c.feedback.push({ interviewerId: document.getElementById('fbInt').value, rating: document.getElementById('fbRate').value, notes, submittedAt: new Date().toISOString() });
-  saveData('candidates', candidates);
-  closeModal();
-  render();
+  await persistCandidateChange(c, null);
 }
 
 function updateChecks(candId) {
@@ -4386,12 +4487,10 @@ function updateChecks(candId) {
   `);
 }
 
-function saveChecks(candId) {
+async function saveChecks(candId) {
   const c = candidates.find(x => x.id === candId);
   c.preEmploymentChecks = { reference: document.getElementById('chkRef').checked, background: document.getElementById('chkBack').checked, criminal: document.getElementById('chkCrim').checked, education: document.getElementById('chkEdu').checked, notes: document.getElementById('chkNotes').value };
-  saveData('candidates', candidates);
-  closeModal();
-  render();
+  await persistCandidateChange(c, null);
 }
 
 function prepareOffer(candId) {
@@ -4419,36 +4518,40 @@ function prepareOffer(candId) {
   `);
 }
 
-function sendOffer(candId) {
+async function sendOffer(candId) {
   const c = candidates.find(x => x.id === candId);
   const sal = document.getElementById('offSal').value;
   const sd = document.getElementById('offStart').value;
   if (!sal || !sd) { alert('Salary and start date required'); return; }
   c.offer = { salary: parseFloat(sal), grade: document.getElementById('offGrade').value, startDate: sd, benefits: document.getElementById('offBen').value, notes: document.getElementById('offNotes').value, sentAt: new Date().toISOString(), status: 'sent' };
-  saveData('candidates', candidates);
-  logActivity(c.reqId, 'Offer sent to candidate');
-  closeModal();
-  render();
+  await persistCandidateChange(c, 'Offer sent to candidate');
 }
 
-function offerResponse(candId, response) {
+async function offerResponse(candId, response) {
   const c = candidates.find(x => x.id === candId);
   if (!c || !c.offer) return;
   c.offer.status = response;
   c.offer.respondedAt = new Date().toISOString();
+  let reqActivity = null;
   if (response === 'accepted') {
     const r = requisitions.find(x => x.id === c.reqId);
     r.status = 'pending_close';
-    saveData('requisitions', requisitions);
-    logActivity(c.reqId, `Offer accepted — expected start: ${formatDate(c.offer.startDate)}`);
+    // Persist the requisition change first (status → pending_close)
+    try {
+      await saveSingleRequisition(r);
+    } catch (e) {
+      console.error('offerResponse req save failed:', e);
+      toast('Failed to update requisition: ' + (e.message || e), true);
+      return;
+    }
+    reqActivity = `Offer accepted — expected start: ${formatDate(c.offer.startDate)}`;
   } else if (response === 'declined') {
     c.status = 'rejected';
-    logActivity(c.reqId, 'Offer declined');
+    reqActivity = 'Offer declined';
   } else {
-    logActivity(c.reqId, 'Candidate negotiating offer');
+    reqActivity = 'Candidate negotiating offer';
   }
-  saveData('candidates', candidates);
-  render();
+  await persistCandidateChange(c, reqActivity, { closeModal: false });
 }
 
 // ============================================================
