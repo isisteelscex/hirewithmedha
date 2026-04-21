@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hire with Medhā</title>
-<!-- build: 2026-04-21-v5 requester dashboard filters by real user id -->
+<!-- build: 2026-04-21-v6 getUserName resolves real tenant members first, legacy fallback -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1242,7 +1242,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-21-v5';
+const HWM_BUILD = '2026-04-21-v6';
 console.log('%cHire with Medhā', 'color:#00338d;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -1251,6 +1251,8 @@ let currentMember = null;   // tenant_members row
 let currentAuthUser = null; // auth user
 let deptMaps = { byName: {}, byId: {} };  // name lookups for function/sub/unit
 let roleLibMaps = { byTitle: {}, byId: {} };
+// Lookup: real Supabase UUID → { id, name, email, role } built from tenant_members + profiles
+let realUsersByUuid = {};
 
 // Expose things the inline onclick handlers need
 window.sb = sb;
@@ -1774,9 +1776,12 @@ function reqFromDb(row) {
     hrbpJustification: row.hrbp_justification,
     fhJustification: row.fh_justification,
     ceoJustification: row.ceo_justification,
-    immediateSupervisorId: row._supervisor_legacy || 'U001',   // demo users stay client-side
-    hiringManagerId: row._hm_legacy || 'U001',
-    requesterId: row._requester_legacy || 'U001',
+    // Use the REAL Supabase UUID if that user exists in our tenant (so getUserName
+    // resolves to "Vorn Vanna" etc). Fall back to the legacy 'U001' for rows where
+    // the requester isn't a known real user (seed data attributed to demo users).
+    requesterId: (row.requester_id && realUsersByUuid[row.requester_id]) ? row.requester_id : (row._requester_legacy || 'U001'),
+    immediateSupervisorId: (row.immediate_supervisor_id && realUsersByUuid[row.immediate_supervisor_id]) ? row.immediate_supervisor_id : (row._supervisor_legacy || 'U001'),
+    hiringManagerId: (row.hiring_manager_id && realUsersByUuid[row.hiring_manager_id]) ? row.hiring_manager_id : (row._hm_legacy || 'U001'),
     // Real UUIDs for ownership checks (multi-user filtering, etc.)
     realRequesterId: row._requester_real || null,
     realSupervisorId: row._supervisor_real || null,
@@ -1898,7 +1903,7 @@ async function loadEverything() {
   const t = currentTenantId;
 
   // Parallel fetch
-  const [deptsRes, rolesRes, reqsRes, candsRes, appsRes, ivRes, ivfRes, reqRecRes, actRes] = await Promise.all([
+  const [deptsRes, rolesRes, reqsRes, candsRes, appsRes, ivRes, ivfRes, reqRecRes, actRes, membersRes] = await Promise.all([
     sb.from('departments').select('*').eq('tenant_id', t),
     sb.from('role_library').select('*').eq('tenant_id', t).eq('is_active', true),
     sb.from('requisitions').select('*').eq('tenant_id', t).is('deleted_at', null).order('created_at'),
@@ -1908,7 +1913,24 @@ async function loadEverything() {
     sb.from('interview_feedback').select('*').eq('tenant_id', t),
     sb.from('requisition_recruiters').select('*'),
     sb.from('activity_log').select('*').eq('tenant_id', t).order('created_at', { ascending: false }).limit(200),
+    // Fetch all active tenant members with their profiles — so getUserName can resolve real UUIDs
+    sb.from('tenant_members')
+      .select('user_id, role, profiles(id, full_name, email)')
+      .eq('tenant_id', t).eq('status', 'active'),
   ]);
+
+  // Build the real-users lookup from tenant_members + profiles
+  realUsersByUuid = {};
+  (membersRes.data || []).forEach(m => {
+    if (m.profiles) {
+      realUsersByUuid[m.user_id] = {
+        id: m.user_id,
+        name: m.profiles.full_name || m.profiles.email || 'Unknown',
+        email: m.profiles.email,
+        role: m.role,
+      };
+    }
+  });
 
   // Build dept maps
   deptMaps = { byName: {}, byId: {} };
@@ -1944,9 +1966,10 @@ async function loadEverything() {
 
   // Transform requisitions
   requisitions = (reqsRes.data || []).map(row => {
+    // For recruiter assignments: use real UUIDs when they're known tenant members,
+    // fall back to the demo U009 identity for unknown UUIDs (seed data).
     row._recruiters_legacy = (recsByReq[row.id] || []).map(uid =>
-      // Map real auth UUIDs to demo USERS. Since only Chandy is real, default assigned to U009 (Sok Phanna) for display.
-      uid === currentAuthUser?.id ? 'U009' : 'U009'
+      realUsersByUuid[uid] ? uid : 'U009'
     );
     // Preserve the REAL requester UUID from the DB for ownership filtering.
     // If it matches the logged-in user, also map to the 'U001' demo id so
@@ -2256,12 +2279,22 @@ function generateSeedData() {
 // ============================================================
 // UTILITIES
 // ============================================================
-function getUserName(id) { return (USERS.find(u => u.id === id) || {}).name || 'Unknown'; }
-function getUser(id) { return USERS.find(u => u.id === id); }
+// Resolve a user id to a display object. Checks real Supabase users (from
+// tenant_members + profiles) FIRST, then falls back to the hardcoded demo
+// USERS array. This lets the same function display both real users (UUIDs)
+// and demo/legacy users ('U001' etc) correctly across all views.
+function getUser(id) {
+  if (!id) return null;
+  return realUsersByUuid[id] || USERS.find(u => u.id === id) || null;
+}
+function getUserName(id) {
+  const u = getUser(id);
+  return u?.name || 'Unknown';
+}
 function getUserInitials(id) {
   const u = getUser(id);
-  if (!u) return '?';
-  return u.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+  if (!u?.name) return '?';
+  return u.name.split(/\s+/).map(n => n[0]).filter(Boolean).join('').substring(0, 2).toUpperCase();
 }
 
 function daysSince(dateStr) { if (!dateStr) return 0; return Math.floor((new Date() - new Date(dateStr)) / (24*60*60*1000)); }
