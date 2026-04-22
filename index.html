@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hire with Medhā</title>
-<!-- build: 2026-04-22-v18 real org structure from DB; Sub-function→Department, Unit→Section, section optional -->
+<!-- build: 2026-04-22-v19 supervisor/HM pickers use 745-employee autocomplete; employee_id columns on requisitions -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1242,7 +1242,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v18';
+const HWM_BUILD = '2026-04-22-v19';
 console.log('%cHire with Medhā', 'color:#00338d;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -1251,6 +1251,7 @@ let currentMember = null;   // tenant_members row
 let currentAuthUser = null; // auth user
 let deptMaps = { byName: {}, byId: {} };  // name lookups for function/sub/unit
 let roleLibMaps = { byTitle: {}, byId: {} };
+let employeeMaps = { byId: {}, byCode: {}, byUserId: {}, list: [] };  // employees from master file
 // Lookup: real Supabase UUID → { id, name, email, role } built from tenant_members + profiles
 let realUsersByUuid = {};
 
@@ -1449,6 +1450,7 @@ const TRANSLATIONS = {
     ph_new_role_ex: 'e.g., AI/ML Specialist',
     ph_just: 'Explain why this role is needed, what problem it solves, and the impact on your team or the business…',
     ph_search: 'Search or select…',
+    ph_type_name: 'Type to search by name…',
     ph_revision: 'Be specific so the requester knows what to fix…',
     ph_reject: 'Explain why this is being rejected…',
     ph_hold: 'Explain why the requisition is being put on hold (e.g., budget freeze, role scope change, business priorities shifting)…',
@@ -1637,6 +1639,7 @@ const TRANSLATIONS = {
     ph_new_role_ex: 'ឧ. អ្នកឯកទេស AI/ML',
     ph_just: 'ពន្យល់មូលហេតុដែលត្រូវការមុខតំណែងនេះ បញ្ហាដែលវាដោះស្រាយ និងផលប៉ះពាល់លើក្រុមឬអាជីវកម្ម…',
     ph_search: 'ស្វែងរក ឬជ្រើសរើស…',
+    ph_type_name: 'វាយឈ្មោះដើម្បីស្វែងរក…',
     ph_revision: 'ជាក់លាក់ដើម្បីឱ្យអ្នកស្នើដឹងពីអ្វីដែលត្រូវកែសម្រួល…',
     ph_reject: 'ពន្យល់មូលហេតុដែលវាកំពុងត្រូវបានបដិសេធ…',
     ph_hold: 'ពន្យល់មូលហេតុដែលសំណើកំពុងត្រូវបានផ្អាក (ឧ. ការកក់ថវិកា ការផ្លាស់ប្តូរវិសាលភាពមុខតំណែង អាទិភាពអាជីវកម្មផ្លាស់ប្តូរ)…',
@@ -1792,6 +1795,13 @@ function reqFromDb(row) {
     realRequesterId: row._requester_real || null,
     realSupervisorId: row._supervisor_real || null,
     realHiringManagerId: row._hm_real || null,
+    // Employee-table refs (canonical supervisor/HM after Phase B import).
+    // realSupervisorEmpId / realHmEmpId mirror the DB value so approvers
+    // don't accidentally overwrite them during updates.
+    supervisorEmpId: row.immediate_supervisor_employee_id || null,
+    hmEmpId: row.hiring_manager_employee_id || null,
+    realSupervisorEmpId: row.immediate_supervisor_employee_id || null,
+    realHmEmpId: row.hiring_manager_employee_id || null,
     jdFilename: row.jd_filename,
     jdStoragePath: row.jd_storage_path,
     jdUploadedAt: row.jd_uploaded_at,
@@ -1837,6 +1847,14 @@ function reqToDb(r) {
   const hmUuid = isNewReq
     ? currentAuthUser?.id
     : (r.realHiringManagerId || null);
+  // ⭐ Same rule for the employee_id columns: new reqs carry the picker values;
+  // existing reqs preserve whatever was in the DB (don't let approvers overwrite).
+  const supEmpIdForDb = isNewReq
+    ? (r.supervisorEmpId || null)
+    : (r.realSupervisorEmpId || null);
+  const hmEmpIdForDb = isNewReq
+    ? (r.hmEmpId || null)
+    : (r.realHmEmpId || null);
   return {
     req_code: r.id,
     job_title: r.roleTitle,
@@ -1855,6 +1873,8 @@ function reqToDb(r) {
     requester_id: requesterUuid,
     immediate_supervisor_id: supervisorUuid,
     hiring_manager_id: hmUuid,
+    immediate_supervisor_employee_id: supEmpIdForDb,
+    hiring_manager_employee_id: hmEmpIdForDb,
     jd_filename: r.jdFilename,
     workflow_status: r.status,
     approval_path: r.approvalPath || 'standard',
@@ -1929,7 +1949,7 @@ async function loadEverything() {
   const t = currentTenantId;
 
   // Parallel fetch
-  const [deptsRes, rolesRes, reqsRes, candsRes, appsRes, ivRes, ivfRes, reqRecRes, actRes, membersRes] = await Promise.all([
+  const [deptsRes, rolesRes, reqsRes, candsRes, appsRes, ivRes, ivfRes, reqRecRes, actRes, membersRes, empsRes] = await Promise.all([
     sb.from('departments').select('*').eq('tenant_id', t),
     sb.from('role_library').select('*').eq('tenant_id', t).eq('is_active', true),
     sb.from('requisitions').select('*').eq('tenant_id', t).is('deleted_at', null).order('created_at'),
@@ -1945,6 +1965,9 @@ async function loadEverything() {
     sb.from('tenant_members')
       .select('user_id, role, profiles!tenant_members_user_id_fkey(id, full_name, email)')
       .eq('tenant_id', t).eq('status', 'active'),
+    // Employees: source of truth for Supervisor/HM pickers. Includes people
+    // without logins (most of the 745). Name resolution + dropdowns pull from here.
+    sb.from('employees').select('id, employee_code, name_en, name_kh, position_title, grade, function_id, department_id, company_email, user_id, company').eq('tenant_id', t).eq('status', 'Active').order('name_en'),
   ]);
 
   // Build the real-users lookup from tenant_members + profiles
@@ -2033,6 +2056,19 @@ async function loadEverything() {
       grade: r.grade
     });
   });
+
+  // ⭐ Build employee lookup maps from the master-file import. The `list` is
+  // used as the autocomplete source for Supervisor/HM pickers. byId and
+  // byCode resolve selected values back to the canonical employee record.
+  // byUserId lets us reverse-lookup: given a login UUID, find the employee.
+  employeeMaps = { byId: {}, byCode: {}, byUserId: {}, list: [] };
+  (empsRes?.data || []).forEach(e => {
+    employeeMaps.byId[e.id] = e;
+    employeeMaps.byCode[e.employee_code] = e;
+    if (e.user_id) employeeMaps.byUserId[e.user_id] = e;
+    employeeMaps.list.push(e);
+  });
+  console.log('[hwm] employees loaded:', employeeMaps.list.length);
 
   // Build the recruiters-per-req lookup (M:N table)
   const recsByReq = {};
@@ -2466,7 +2502,24 @@ function generateSeedData() {
 // and demo/legacy users ('U001' etc) correctly across all views.
 function getUser(id) {
   if (!id) return null;
-  return realUsersByUuid[id] || USERS.find(u => u.id === id) || null;
+  // 1. Real logged-in tenant member (auth.users.id)
+  if (realUsersByUuid[id]) return realUsersByUuid[id];
+  // 2. Employee from the master file (employees.id) — for supervisors/HMs
+  //    who don't have a Hire with Medhā login. Normalize to the same shape
+  //    as a user record: { id, name, role, dept }.
+  if (employeeMaps.byId[id]) {
+    const e = employeeMaps.byId[id];
+    return {
+      id: e.id,
+      name: e.name_en,
+      role: 'employee',
+      dept: e.position_title || '',
+      email: e.company_email || '',
+      _employee: true,
+    };
+  }
+  // 3. Legacy demo user (e.g. 'U001') — keeps seed data + admin preview working
+  return USERS.find(u => u.id === id) || null;
 }
 function getUserName(id) {
   const u = getUser(id);
@@ -2485,6 +2538,22 @@ function getUsersWithRoles(roleList) {
   const real = Object.values(realUsersByUuid).filter(u => roleList.includes(u.role));
   if (real.length > 0) return real;
   return USERS.filter(u => roleList.includes(u.role));
+}
+
+// ⭐ Resolve a requisition's supervisor/HM for display. Prefers the canonical
+// employee record (supervisorEmpId/hmEmpId) over the legacy user_id columns.
+// Falls back to legacy getUserName lookup for reqs created before Phase B.
+function getSupervisorName(r) {
+  if (r.supervisorEmpId && employeeMaps.byId[r.supervisorEmpId]) {
+    return employeeMaps.byId[r.supervisorEmpId].name_en;
+  }
+  return getSupervisorName(r);
+}
+function getHiringManagerName(r) {
+  if (r.hmEmpId && employeeMaps.byId[r.hmEmpId]) {
+    return employeeMaps.byId[r.hmEmpId].name_en;
+  }
+  return getUserName(r.hiringManagerId);
 }
 
 function daysSince(dateStr) { if (!dateStr) return 0; return Math.floor((new Date() - new Date(dateStr)) / (24*60*60*1000)); }
@@ -3022,12 +3091,19 @@ function renderNewReqForm() {
         <div class="form-section">
           <div class="form-section-title">${t('sec_reporting')}</div>
           
+          <!-- Shared datalist for both Supervisor and Hiring Manager autocomplete.
+               Format: "Name — Position (Grade)" as the label. Actual lookup is
+               by name_en prefix match when submitted. -->
+          <datalist id="employeeOptions">
+            ${employeeMaps.list.map(e => {
+              const label = `${e.name_en} — ${e.position_title || ''} (${e.grade || ''})`;
+              return `<option value="${label.replace(/"/g, '&quot;')}"></option>`;
+            }).join('')}
+          </datalist>
+          
           <div class="form-group">
             <label class="required">${t('lbl_imm_sup')}</label>
-            <select id="immediateSupervisor" required>
-              <option value="">${t('ph_search')}</option>
-              ${getUsersWithRoles(['function_head','hiring_manager','ceo','head_ta','hrbp']).map(u => `<option value="${u.id}">${u.name}${u.dept ? ' — ' + u.dept : ''}</option>`).join('')}
-            </select>
+            <input type="text" id="immediateSupervisor" list="employeeOptions" placeholder="${t('ph_type_name') || 'Type to search by name…'}" autocomplete="off" required>
             <div class="form-hint">${t('hint_sup')}</div>
           </div>
           
@@ -3042,10 +3118,7 @@ function renderNewReqForm() {
           
           <div class="form-group hidden" id="hmField">
             <label class="required">${t('lbl_hm')}</label>
-            <select id="hiringManager">
-              <option value="">${t('ph_search')}</option>
-              ${getUsersWithRoles(['function_head','hiring_manager','ceo','head_ta','hrbp']).map(u => `<option value="${u.id}">${u.name}${u.dept ? ' — ' + u.dept : ''}</option>`).join('')}
-            </select>
+            <input type="text" id="hiringManager" list="employeeOptions" placeholder="${t('ph_type_name') || 'Type to search by name…'}" autocomplete="off">
           </div>
         </div>
         
@@ -3145,10 +3218,38 @@ async function submitNewReq() {
   }
   
   const sameHM = document.querySelector('input[name="sameHM"]:checked').value;
-  const supId = document.getElementById('immediateSupervisor').value;
-  const hmId = sameHM === 'yes' ? supId : document.getElementById('hiringManager').value;
-  if (!supId) { alert('Select immediate supervisor'); return; }
-  if (sameHM === 'no' && !hmId) { alert('Select hiring manager'); return; }
+  const supTyped = document.getElementById('immediateSupervisor').value.trim();
+  const hmTyped  = sameHM === 'yes' ? supTyped : document.getElementById('hiringManager').value.trim();
+  if (!supTyped) { alert('Select immediate supervisor'); return; }
+  if (sameHM === 'no' && !hmTyped) { alert('Select hiring manager'); return; }
+
+  // ⭐ Convert the typed label back to an employee record. Labels are
+  // "Name — Position (Grade)" — we match by label prefix. If no match is
+  // found, the user typed a freeform value we don't recognize — reject.
+  const labelFor = e => `${e.name_en} — ${e.position_title || ''} (${e.grade || ''})`;
+  const supEmp = employeeMaps.list.find(e => labelFor(e) === supTyped);
+  if (!supEmp) {
+    alert('Immediate supervisor must be selected from the list. Typed value "' + supTyped + '" was not found.');
+    return;
+  }
+  const hmEmp = sameHM === 'yes' ? supEmp : employeeMaps.list.find(e => labelFor(e) === hmTyped);
+  if (sameHM === 'no' && !hmEmp) {
+    alert('Hiring manager must be selected from the list. Typed value "' + hmTyped + '" was not found.');
+    return;
+  }
+
+  // Map the selected employees to both the employee_id (always) and the
+  // user_id (only if they have a linked login). Keep legacy supId/hmId as
+  // user UUIDs for backward-compat code paths.
+  const supEmpId = supEmp.id;
+  const hmEmpId  = hmEmp.id;
+  const supUserId = supEmp.user_id || null;
+  const hmUserId  = hmEmp.user_id || null;
+  // Legacy code expects these to be truthy strings — use the employee_id as a
+  // stable stand-in when no user_id is available. The DB save uses the real
+  // employee_id column regardless.
+  const supId = supUserId || supEmpId;
+  const hmId  = hmUserId  || hmEmpId;
 
   // Resources validation
   const noneBox = document.getElementById('resNone');
@@ -3178,6 +3279,7 @@ async function submitNewReq() {
     resourcesRequired,
     hrbpJustification: null, fhJustification: null, ceoJustification: null,
     immediateSupervisorId: supId, hiringManagerId: hmId, requesterId: currentUserId,
+    supervisorEmpId: supEmpId, hmEmpId: hmEmpId,
     jdFilename: jdFile.name, status: 'hrbp_review',
     approvalPath: isUnplanned ? 'ceo_required' : 'standard',
     submittedAt: new Date().toISOString(),
@@ -3292,8 +3394,8 @@ function renderRequesterDetail(reqId) {
               <div class="detail-row"><span class="detail-label">${t('lbl_unit')}</span><span class="detail-value">${r.unit || '—'}</span></div>
               <div class="detail-row"><span class="detail-label">${t('lbl_replacement')}</span><span class="detail-value">${r.isReplacement ? t('lbl_yes') : t('lbl_no')}</span></div>
               <div class="detail-row"><span class="detail-label">${t('lbl_planned')}</span><span class="detail-value">${r.isPlanned ? t('lbl_yes') : t('lbl_no')}</span></div>
-              <div class="detail-row"><span class="detail-label">${t('lbl_imm_sup')}</span><span class="detail-value">${getUserName(r.immediateSupervisorId)}</span></div>
-              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getUserName(r.hiringManagerId)}</span></div>
+              <div class="detail-row"><span class="detail-label">${t('lbl_imm_sup')}</span><span class="detail-value">${getSupervisorName(r)}</span></div>
+              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getHiringManagerName(r)}</span></div>
               <div class="detail-row"><span class="detail-label">${t('th_submitted')}</span><span class="detail-value">${formatDate(r.submittedAt)}</span></div>
               ${r.targetFillDate ? `<div class="detail-row"><span class="detail-label">${t('th_target_fill')}</span><span class="detail-value">${formatDate(r.targetFillDate)} · ${daysUntil(r.targetFillDate)}${t('txt_days').charAt(0)}</span></div>` : ''}
             </div>
@@ -3584,8 +3686,8 @@ function renderHRBPDetail(reqId) {
               <div class="detail-row"><span class="detail-label">${t('th_role')}</span><span class="detail-value">${r.roleTitle} ${r.isNewRole ? `<span class="badge badge-info" style="margin-left: 0.4rem;">${t('st_new_role')}</span>` : ''}</span></div>
               <div class="detail-row"><span class="detail-label">${t('th_grade')}</span><span class="detail-value">${r.grade}</span></div>
               <div class="detail-row"><span class="detail-label">${t('lbl_replacement')} / ${t('lbl_planned')}</span><span class="detail-value">${r.isReplacement ? t('lbl_yes') : t('lbl_no')} / ${r.isPlanned ? t('lbl_yes') : t('lbl_no')}</span></div>
-              <div class="detail-row"><span class="detail-label">${t('lbl_imm_sup')}</span><span class="detail-value">${getUserName(r.immediateSupervisorId)}</span></div>
-              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getUserName(r.hiringManagerId)}</span></div>
+              <div class="detail-row"><span class="detail-label">${t('lbl_imm_sup')}</span><span class="detail-value">${getSupervisorName(r)}</span></div>
+              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getHiringManagerName(r)}</span></div>
             </div>
           </div>
           
@@ -3925,8 +4027,8 @@ function renderFHDetail(reqId) {
               <div class="detail-row"><span class="detail-label">${t('th_role')}</span><span class="detail-value">${r.roleTitle} ${r.isNewRole ? `<span class="badge badge-info" style="margin-left: 0.4rem;">${t('st_new_role')}</span>` : ''}</span></div>
               <div class="detail-row"><span class="detail-label">${t('th_grade')}</span><span class="detail-value">${r.grade}</span></div>
               <div class="detail-row"><span class="detail-label">${t('lbl_replacement')} / ${t('lbl_planned')}</span><span class="detail-value">${r.isReplacement ? t('lbl_yes') : t('lbl_no')} / ${r.isPlanned ? t('lbl_yes') : t('lbl_no')}</span></div>
-              <div class="detail-row"><span class="detail-label">${t('lbl_imm_sup')}</span><span class="detail-value">${getUserName(r.immediateSupervisorId)}</span></div>
-              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getUserName(r.hiringManagerId)}</span></div>
+              <div class="detail-row"><span class="detail-label">${t('lbl_imm_sup')}</span><span class="detail-value">${getSupervisorName(r)}</span></div>
+              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getHiringManagerName(r)}</span></div>
             </div>
           </div>
           
@@ -4274,7 +4376,7 @@ function renderTADetail(reqId) {
               <div class="detail-row"><span class="detail-label">${t('th_role')}</span><span class="detail-value">${r.roleTitle}</span></div>
               <div class="detail-row"><span class="detail-label">${t('th_grade')}</span><span class="detail-value">${r.grade}</span></div>
               <div class="detail-row"><span class="detail-label">${t('th_requester')}</span><span class="detail-value">${getUserName(r.requesterId)}</span></div>
-              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getUserName(r.hiringManagerId)}</span></div>
+              <div class="detail-row"><span class="detail-label">${t('lbl_hm')}</span><span class="detail-value">${getHiringManagerName(r)}</span></div>
               <div class="detail-row"><span class="detail-label">${t('th_path')}</span><span class="detail-value">${r.approvalPath === 'ceo_required' ? t('st_ceo_approved') : t('st_standard')}</span></div>
             </div>
           </div>
