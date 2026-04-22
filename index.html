@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hire with Medhā</title>
-<!-- build: 2026-04-22-v14 requester dashboard shows inline pipeline stage counts for active_sourcing reqs -->
+<!-- build: 2026-04-22-v16 role dropdown disambiguates variants by title/function/grade -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1242,7 +1242,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v14';
+const HWM_BUILD = '2026-04-22-v16';
 console.log('%cHire with Medhā', 'color:#00338d;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -1814,7 +1814,11 @@ function reqToDb(r) {
   const fnId = r.function    ? deptMaps.byName[`function:${r.function}`]?.id         : null;
   const sfId = r.subFunction ? deptMaps.byName[`sub_function:${r.subFunction}`]?.id  : null;
   const unId = r.unit        ? deptMaps.byName[`unit:${r.unit}`]?.id                 : null;
-  const roleLibId = r.roleId ? roleLibMaps.byTitle[r.roleTitle]?.id : null;
+  // Look up the role by legacyId first (unique per row). Fall back to byTitle for
+  // legacy reqs that still use the title-only path.
+  const roleLibId = r.roleId
+    ? (roleLibMaps.byLegacyId?.[r.roleId]?.id || roleLibMaps.byTitle?.[r.roleTitle]?.id || null)
+    : null;
   // CRITICAL: preserve the real requester/supervisor/HM across updates.
   // - For NEW reqs (no _dbId), default to currentAuthUser
   // - For EXISTING reqs, use the realRequesterId that was loaded from the DB
@@ -1975,12 +1979,15 @@ async function loadEverything() {
   });
 
   // Build role library maps
-  roleLibMaps = { byTitle: {}, byId: {} };
+  roleLibMaps = { byTitle: {}, byId: {}, byLegacyId: {} };
   (rolesRes.data || []).forEach((r, i) => {
     const legacyId = `R${String(i + 1).padStart(3, '0')}`;
     r.legacyId = legacyId;
+    // byTitle may collide across variants; last-write-wins is intentional for
+    // legacy fallback. byLegacyId is guaranteed unique per row.
     roleLibMaps.byTitle[r.title] = r;
     roleLibMaps.byId[r.id] = r;
+    roleLibMaps.byLegacyId[legacyId] = r;
   });
   // Overwrite EXISTING_ROLES (the prototype's dropdown source) with DB data
   EXISTING_ROLES.length = 0;
@@ -2895,7 +2902,7 @@ function renderNewReqForm() {
             <label class="required">${t('th_role')}</label>
             <select id="roleSelect" onchange="toggleNewRole()">
               <option value="">${t('ph_select_role')}</option>
-              ${EXISTING_ROLES.map(r => `<option value="${r.id}">${r.title} (${r.grade})</option>`).join('')}
+              ${[...EXISTING_ROLES].sort((a,b) => a.title.localeCompare(b.title) || a.grade.localeCompare(b.grade)).map(r => `<option value="${r.id}">${r.title} — ${r.function} (${r.grade})</option>`).join('')}
               <option value="NEW">${t('ph_new_role')}</option>
             </select>
           </div>
@@ -2910,7 +2917,7 @@ function renderNewReqForm() {
                 <label class="required">${t('lbl_proposed_grade')}</label>
                 <select id="newRoleGrade">
                   <option value="">${t('ph_select_grade')}</option>
-                  ${['G1','G2','G3','G4','G5','G6','G7','G8','G9','G10','G11','G12'].map(g => `<option value="${g}">${g}</option>`).join('')}
+                  ${['G1','G2','G3','G4','G5','G6','G7','G8','G9','G10','G11','G12','G13','G14','G15'].map(g => `<option value="${g}">${g}</option>`).join('')}
                 </select>
               </div>
             </div>
@@ -4612,7 +4619,7 @@ function prepareOffer(candId) {
     <p class="modal-desc"><strong>${c.name}</strong> — ${r.roleTitle}</p>
     <div class="form-grid-2">
       <div class="form-group"><label class="required">${t('lbl_salary')}</label><input type="number" id="offSal" value="${e.salary || ''}"></div>
-      <div class="form-group"><label class="required">${t('lbl_grade')}</label><select id="offGrade">${['G1','G2','G3','G4','G5','G6','G7','G8','G9','G10','G11','G12'].map(g => `<option value="${g}" ${(e.grade || r.grade) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="required">${t('lbl_grade')}</label><select id="offGrade">${['G1','G2','G3','G4','G5','G6','G7','G8','G9','G10','G11','G12','G13','G14','G15'].map(g => `<option value="${g}" ${(e.grade || r.grade) === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
     </div>
     <div class="form-group"><label class="required">${t('lbl_start_date')}</label><input type="date" id="offStart" value="${e.startDate || ''}"></div>
     <div class="form-group"><label>${t('lbl_benefits')}</label><textarea id="offBen" rows="3">${e.benefits || ''}</textarea></div>
