@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ISI Group Talent</title>
-<!-- build: 2026-04-22-v21 ISI Group Talent rebrand: Apex Blue + Foundational White, ABC Ginto fonts embedded, ISI logo -->
+<!-- build: 2026-04-22-v22 Retired legacy U00X/U01X demo IDs + USERS array + generateSeedData dead code -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1239,7 +1239,7 @@ details.collapsible > *:not(summary) { margin-top: 1rem; }
       text-align:center; font-size: 11px; color: var(--ink-4);
       margin-top: 1.5rem; letter-spacing: 0.04em;
       font-family: var(--font-serif); font-style: italic;
-    ">CREATE - BUILD BETTER</p>
+    ">Guided by wisdom. Driven by people.</p>
   </div>
 </div>
 
@@ -1271,7 +1271,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v21';
+const HWM_BUILD = '2026-04-22-v22';
 console.log('%cISI Group Talent', 'color:#011e41;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -1309,30 +1309,17 @@ const EXISTING_ROLES = [
   { id: 'R008', title: 'HR Specialist', function: 'HR', grade: 'G5' }
 ];
 
-const USERS = [
-  { id: 'U001', name: 'Chandy OT', email: 'chandy@medha.com', role: 'requester', dept: 'HR' },
-  { id: 'U002', name: 'Sarah Chen', email: 'sarah@medha.com', role: 'requester', dept: 'Sales' },
-  { id: 'U003', name: 'Mike Liu', email: 'mike@medha.com', role: 'requester', dept: 'Engineering' },
-  { id: 'U004', name: 'Nisa Kim', email: 'nisa@medha.com', role: 'hrbp', dept: 'HR' },
-  { id: 'U005', name: 'Dara Seng', email: 'dara@medha.com', role: 'function_head', dept: 'Sales' },
-  { id: 'U006', name: 'Rithy Chan', email: 'rithy@medha.com', role: 'function_head', dept: 'Engineering' },
-  { id: 'U007', name: 'Vathana Pich', email: 'vathana@medha.com', role: 'ceo', dept: 'Executive' },
-  { id: 'U008', name: 'Bopha Sovann', email: 'bopha@medha.com', role: 'head_ta', dept: 'HR' },
-  { id: 'U009', name: 'Sok Phanna', email: 'phanna@medha.com', role: 'recruiter', dept: 'HR' },
-  { id: 'U010', name: 'Kimly Chea', email: 'kimly@medha.com', role: 'recruiter', dept: 'HR' },
-  { id: 'U011', name: 'Dara Meas', email: 'meas@medha.com', role: 'recruiter', dept: 'HR' },
-  { id: 'U012', name: 'Nita Kun', email: 'nita@medha.com', role: 'recruiter', dept: 'HR' },
-  { id: 'U013', name: 'John Park', email: 'john@medha.com', role: 'hiring_manager', dept: 'Sales' },
-  { id: 'U014', name: 'Lisa Wong', email: 'lisa@medha.com', role: 'hiring_manager', dept: 'Engineering' }
-];
-
+// ⭐ ROLES defines the role categories used for dashboards and the admin
+// role-switcher. Labels are fallbacks; the UI uses translated ROLES_LABELS at
+// render time. All user identity now flows from real Supabase Auth UUIDs
+// (realUsersByUuid) — there are no demo/hardcoded users anymore.
 const ROLES = {
-  requester: { label: 'Requester', userId: 'U001' },
-  hrbp: { label: 'HRBP', userId: 'U004' },
-  function_head: { label: 'Function Head', userId: 'U005' },
-  ceo: { label: 'CEO', userId: 'U007' },
-  head_ta: { label: 'Head of TA', userId: 'U008' },
-  recruiter: { label: 'Recruiter', userId: 'U009' }
+  requester:     { label: 'Requester' },
+  hrbp:          { label: 'HRBP' },
+  function_head: { label: 'Function Head' },
+  ceo:           { label: 'CEO' },
+  head_ta:       { label: 'Head of TA' },
+  recruiter:     { label: 'Recruiter' }
 };
 
 // Resources required for new hires — order preserved for display
@@ -1362,7 +1349,7 @@ const STATUS_CONFIG = {
 };
 
 // State
-let currentUserId = 'U001';
+let currentUserId = null;  // set by auth flow after login
 let currentRole = 'requester';
 let currentView = 'dashboard';
 let selectedReqId = null;
@@ -1816,12 +1803,12 @@ function reqFromDb(row) {
     hrbpJustification: row.hrbp_justification,
     fhJustification: row.fh_justification,
     ceoJustification: row.ceo_justification,
-    // Use the REAL Supabase UUID if that user exists in our tenant (so getUserName
-    // resolves to "Vorn Vanna" etc). Fall back to the legacy 'U001' for rows where
-    // the requester isn't a known real user (seed data attributed to demo users).
-    requesterId: (row.requester_id && realUsersByUuid[row.requester_id]) ? row.requester_id : (row._requester_legacy || 'U001'),
-    immediateSupervisorId: (row.immediate_supervisor_id && realUsersByUuid[row.immediate_supervisor_id]) ? row.immediate_supervisor_id : (row._supervisor_legacy || 'U001'),
-    hiringManagerId: (row.hiring_manager_id && realUsersByUuid[row.hiring_manager_id]) ? row.hiring_manager_id : (row._hm_legacy || 'U001'),
+    // Real Supabase UUIDs — getUserName() resolves these via realUsersByUuid.
+    // If a UUID isn't in our tenant (shouldn't happen in production), getUser
+    // returns null and display code shows "Unknown" gracefully.
+    requesterId: row.requester_id || null,
+    immediateSupervisorId: row.immediate_supervisor_id || null,
+    hiringManagerId: row.hiring_manager_id || null,
     // Real UUIDs for ownership checks (multi-user filtering, etc.)
     realRequesterId: row._requester_real || null,
     realSupervisorId: row._supervisor_real || null,
@@ -2111,21 +2098,13 @@ async function loadEverything() {
 
   // Transform requisitions
   requisitions = (reqsRes.data || []).map(row => {
-    // For recruiter assignments: use real UUIDs when they're known tenant members,
-    // fall back to the demo U009 identity for unknown UUIDs (seed data).
-    row._recruiters_legacy = (recsByReq[row.id] || []).map(uid =>
-      realUsersByUuid[uid] ? uid : 'U009'
-    );
-    // Preserve the REAL requester UUID from the DB for ownership filtering.
-    // If it matches the logged-in user, also map to the 'U001' demo id so
-    // prototype-code comparisons like r.requesterId === currentUserId still
-    // work for the logged-in person.
+    // Recruiter assignments — only real tenant-member UUIDs are kept; unknown
+    // UUIDs would indicate a stale row and are dropped rather than masked.
+    row._recruiters_legacy = (recsByReq[row.id] || []).filter(uid => realUsersByUuid[uid]);
+    // Preserve the REAL UUIDs from the DB for ownership filtering.
     row._requester_real = row.requester_id;
     row._supervisor_real = row.immediate_supervisor_id;
     row._hm_real = row.hiring_manager_id;
-    row._requester_legacy = 'U001';  // kept for display fallback
-    row._supervisor_legacy = 'U001';
-    row._hm_legacy = 'U001';
     return reqFromDb(row);
   });
 
@@ -2151,13 +2130,13 @@ async function loadEverything() {
       c.interview = {
         datetime: iv.scheduled_at,
         type: ({phone:'Phone',video:'Video Call',onsite:'In-person',panel:'Panel',take_home:'Take-home',technical:'Technical',cultural:'Cultural'})[iv.interview_type] || iv.interview_type,
-        interviewers: ['U013'],  // demo fallback
+        interviewers: [],  // will be populated from interview_interviewers table when wired
         location: iv.location_or_link || '',
         notes: iv.summary || ''
       };
       // Attach feedback
       c.feedback = (ivfRes.data || []).filter(f => f.interview_id === iv.id).map(f => ({
-        interviewerId: 'U013',
+        interviewerId: null,
         rating: ({strong_hire:'Strong Yes',hire:'Yes',maybe:'Maybe',no_hire:'No',strong_no_hire:'Strong No'})[f.recommendation] || f.recommendation,
         notes: f.strengths || '',
         submittedAt: f.submitted_at
@@ -2426,120 +2405,20 @@ function toast(msg, isErr) {
 }
 window.toast = toast;
 
-// ============================================================
-// SEED DATA
-// ============================================================
-function generateSeedData() {
-  const today = new Date();
-  const daysAgo = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return d.toISOString(); };
-  
-  const seed = [
-    {
-      id: 'REQ-2026-001', roleId: 'R001', roleTitle: 'Senior Sales Manager', isNewRole: false,
-      function: 'Sales', subFunction: 'Regional Sales', unit: 'Cambodia North', grade: 'G8',
-      isReplacement: true, isPlanned: true, justification: 'Backfill for senior manager who resigned in March 2026. Critical role for Q2 revenue targets.',
-      hrbpJustification: null, fhJustification: null, ceoJustification: null,
-      immediateSupervisorId: 'U005', hiringManagerId: 'U005',
-      requesterId: 'U002', jdFilename: 'senior_sales_manager_jd.pdf',
-      status: 'active_sourcing', approvalPath: 'standard',
-      submittedAt: daysAgo(15), hrbpApprovedAt: daysAgo(14), fhApprovedAt: daysAgo(13),
-      ceoApprovedAt: null, taAssignedAt: daysAgo(12), assignedRecruiters: ['U009'],
-      targetFillDate: new Date(today.getTime() + 45*24*60*60*1000).toISOString(),
-      rejectionReason: null, revisionNotes: null
-    },
-    {
-      id: 'REQ-2026-002', roleId: 'R003', roleTitle: 'Software Engineer', isNewRole: false,
-      function: 'Engineering', subFunction: 'Software', unit: 'Backend', grade: 'G6',
-      isReplacement: false, isPlanned: true, justification: 'Approved in 2026 headcount plan for backend team expansion. Team has been stretched thin since Q4 2025.',
-      hrbpJustification: null, fhJustification: null, ceoJustification: null,
-      immediateSupervisorId: 'U014', hiringManagerId: 'U014',
-      requesterId: 'U003', jdFilename: 'software_engineer_jd.pdf',
-      status: 'hrbp_review', approvalPath: 'standard',
-      submittedAt: daysAgo(1), hrbpApprovedAt: null, fhApprovedAt: null,
-      ceoApprovedAt: null, taAssignedAt: null, assignedRecruiters: [],
-      targetFillDate: null, rejectionReason: null, revisionNotes: null
-    },
-    {
-      id: 'REQ-2026-003', roleTitle: 'AI/ML Specialist', isNewRole: true,
-      function: 'Engineering', subFunction: 'Software', unit: 'Backend', grade: 'G7',
-      isReplacement: false, isPlanned: false, 
-      justification: 'Emerging need for AI expertise. Not in original 2026 plan but critical for competitive positioning as competitors have started AI-based features. Requesting CEO approval for this unplanned headcount.',
-      hrbpJustification: null, fhJustification: null, ceoJustification: null,
-      immediateSupervisorId: 'U014', hiringManagerId: 'U014',
-      requesterId: 'U003', jdFilename: 'ai_ml_specialist_jd.pdf',
-      status: 'ceo_approval', approvalPath: 'ceo_required',
-      submittedAt: daysAgo(8), hrbpApprovedAt: daysAgo(6), fhApprovedAt: daysAgo(4),
-      ceoApprovedAt: null, taAssignedAt: null, assignedRecruiters: [],
-      targetFillDate: null, rejectionReason: null, revisionNotes: null
-    },
-    {
-      id: 'REQ-2026-004', roleId: 'R006', roleTitle: 'Accountant', isNewRole: false,
-      function: 'Finance', subFunction: 'Accounting', unit: 'AP', grade: 'G5',
-      isReplacement: true, isPlanned: true, justification: 'Replacement for staff who transferred to Finance Manager role in April.',
-      hrbpJustification: null, fhJustification: null, ceoJustification: null,
-      immediateSupervisorId: 'U005', hiringManagerId: 'U005',
-      requesterId: 'U001', jdFilename: 'accountant_jd.pdf',
-      status: 'ta_assignment', approvalPath: 'standard',
-      submittedAt: daysAgo(7), hrbpApprovedAt: daysAgo(5), fhApprovedAt: daysAgo(3),
-      ceoApprovedAt: null, taAssignedAt: null, assignedRecruiters: [],
-      targetFillDate: null, rejectionReason: null, revisionNotes: null
-    },
-    {
-      id: 'REQ-2026-005', roleId: 'R002', roleTitle: 'Sales Executive', isNewRole: false,
-      function: 'Sales', subFunction: 'Regional Sales', unit: 'Phnom Penh', grade: 'G5',
-      isReplacement: false, isPlanned: true, justification: 'New headcount approved in 2026 plan for Phnom Penh market expansion.',
-      hrbpJustification: null, fhJustification: null, ceoJustification: null,
-      immediateSupervisorId: 'U013', hiringManagerId: 'U013',
-      requesterId: 'U002', jdFilename: 'sales_executive_jd.pdf',
-      status: 'active_sourcing', approvalPath: 'standard',
-      submittedAt: daysAgo(20), hrbpApprovedAt: daysAgo(18), fhApprovedAt: daysAgo(16),
-      ceoApprovedAt: null, taAssignedAt: daysAgo(15), assignedRecruiters: ['U010', 'U011'],
-      targetFillDate: new Date(today.getTime() + 10*24*60*60*1000).toISOString(),
-      rejectionReason: null, revisionNotes: null
-    }
-  ];
-
-  const seedCandidates = [
-    { id: 'CAN-001', reqId: 'REQ-2026-001', name: 'Sophea Lim', email: 'sophea.lim@example.com', phone: '+855 12 345 678', source: 'LinkedIn', cvFilename: 'sophea_lim_cv.pdf', notes: 'Strong background in regional sales management.', stage: 'interview', addedAt: daysAgo(8), stageChangedAt: daysAgo(3), interview: { datetime: new Date(today.getTime() + 2*24*60*60*1000).toISOString(), type: 'Video Call', interviewers: ['U005'], location: 'Zoom link TBD', notes: '' }, feedback: [], preEmploymentChecks: {}, offer: null, status: 'active' },
-    { id: 'CAN-002', reqId: 'REQ-2026-001', name: 'Pisey Heng', email: 'pisey.heng@example.com', phone: '+855 12 987 654', source: 'Referral', cvFilename: 'pisey_heng_cv.pdf', notes: 'Internal referral.', stage: 'screening', addedAt: daysAgo(5), stageChangedAt: daysAgo(2), interview: null, feedback: [], preEmploymentChecks: {}, offer: null, status: 'active' },
-    { id: 'CAN-003', reqId: 'REQ-2026-001', name: 'Chanthou Prum', email: 'chanthou@example.com', phone: '+855 17 234 567', source: 'Job Board', cvFilename: 'chanthou_prum_cv.pdf', notes: '', stage: 'sourcing', addedAt: daysAgo(2), stageChangedAt: daysAgo(2), interview: null, feedback: [], preEmploymentChecks: {}, offer: null, status: 'active' },
-    { id: 'CAN-004', reqId: 'REQ-2026-005', name: 'Rithy Nou', email: 'rithy.nou@example.com', phone: '+855 15 555 123', source: 'LinkedIn', cvFilename: 'rithy_nou_cv.pdf', notes: 'Experienced in B2B sales.', stage: 'offer', addedAt: daysAgo(18), stageChangedAt: daysAgo(2), interview: { datetime: daysAgo(8), type: 'In-person', interviewers: ['U013'], location: 'HQ', notes: 'Went well' }, feedback: [{ interviewerId: 'U013', rating: 'Strong Yes', notes: 'Great fit for the role.', submittedAt: daysAgo(7) }], preEmploymentChecks: { reference: true, background: true, criminal: true, education: true, notes: 'All clear' }, offer: { salary: 1200, grade: 'G5', startDate: new Date(today.getTime() + 30*24*60*60*1000).toISOString().split('T')[0], benefits: 'Standard package', notes: '', sentAt: daysAgo(2), status: 'sent' }, status: 'active' },
-    { id: 'CAN-005', reqId: 'REQ-2026-005', name: 'Sreyleak Kea', email: 'sreyleak@example.com', phone: '+855 16 777 888', source: 'Referral', cvFilename: 'sreyleak_kea_cv.pdf', notes: '', stage: 'preemployment', addedAt: daysAgo(12), stageChangedAt: daysAgo(4), interview: { datetime: daysAgo(8), type: 'Video Call', interviewers: ['U013'], location: 'Zoom', notes: '' }, feedback: [{ interviewerId: 'U013', rating: 'Yes', notes: 'Solid candidate.', submittedAt: daysAgo(7) }], preEmploymentChecks: { reference: true, background: false, criminal: false, education: true, notes: 'Pending background check' }, offer: null, status: 'active' }
-  ];
-
-  const seedActivities = [
-    { reqId: 'REQ-2026-001', date: daysAgo(15), text: 'Requisition submitted', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-001', date: daysAgo(14), text: 'Approved by HRBP', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-001', date: daysAgo(13), text: 'Approved by Function Head', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-001', date: daysAgo(12), text: 'Assigned to Sok Phanna', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-001', date: daysAgo(8), text: 'New candidate added to pipeline', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-001', date: daysAgo(5), text: 'New candidate added to pipeline', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-001', date: daysAgo(3), text: 'Candidate moved to screening', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-001', date: daysAgo(3), text: 'Interview scheduled', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-005', date: daysAgo(20), text: 'Requisition submitted', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-005', date: daysAgo(18), text: 'Approved by HRBP', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-005', date: daysAgo(16), text: 'Approved by Function Head', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-005', date: daysAgo(15), text: 'Assigned to Kimly Chea, Dara Meas', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-005', date: daysAgo(2), text: 'Offer sent to candidate', visibleTo: ['all'] },
-    { reqId: 'REQ-2026-005', date: daysAgo(4), text: 'Candidate moved to pre-employment check', visibleTo: ['all'] }
-  ];
-  return { requisitions: seed, candidates: seedCandidates, activities: seedActivities };
-}
 
 // ============================================================
 // UTILITIES
 // ============================================================
 // Resolve a user id to a display object. Checks real Supabase users (from
-// tenant_members + profiles) FIRST, then falls back to the hardcoded demo
-// USERS array. This lets the same function display both real users (UUIDs)
-// and demo/legacy users ('U001' etc) correctly across all views.
+// tenant_members + profiles) FIRST, then falls back to employee master records
+// (for supervisors/HMs who don't have a login). Returns null for unknown IDs;
+// callers should use getUserName() which shows "Unknown" in that case.
 function getUser(id) {
   if (!id) return null;
   // 1. Real logged-in tenant member (auth.users.id)
   if (realUsersByUuid[id]) return realUsersByUuid[id];
   // 2. Employee from the master file (employees.id) — for supervisors/HMs
-  //    who don't have a Hire with Medhā login. Normalize to the same shape
-  //    as a user record: { id, name, role, dept }.
+  //    who don't have a login. Normalize to the same shape as a user record.
   if (employeeMaps.byId[id]) {
     const e = employeeMaps.byId[id];
     return {
@@ -2551,8 +2430,7 @@ function getUser(id) {
       _employee: true,
     };
   }
-  // 3. Legacy demo user (e.g. 'U001') — keeps seed data + admin preview working
-  return USERS.find(u => u.id === id) || null;
+  return null;
 }
 function getUserName(id) {
   const u = getUser(id);
@@ -2564,13 +2442,10 @@ function getUserInitials(id) {
   return u.name.split(/\s+/).map(n => n[0]).filter(Boolean).join('').substring(0, 2).toUpperCase();
 }
 
-// Return tenant members whose role is in the given list. Uses real users from
-// realUsersByUuid when available; falls back to demo USERS only when NO real
-// users exist for any of the requested roles (admin preview mode).
+// Return tenant members whose role is in the given list. Only real Supabase
+// users are considered — the demo USERS array has been retired.
 function getUsersWithRoles(roleList) {
-  const real = Object.values(realUsersByUuid).filter(u => roleList.includes(u.role));
-  if (real.length > 0) return real;
-  return USERS.filter(u => roleList.includes(u.role));
+  return Object.values(realUsersByUuid).filter(u => roleList.includes(u.role));
 }
 
 // ⭐ Resolve a requisition's supervisor/HM for display. Prefers the canonical
@@ -2767,7 +2642,9 @@ function switchRole(role) {
     return;
   }
   currentRole = role;
-  currentUserId = ROLES[role].userId;
+  // Admin stays as themselves (currentUserId = their real auth UUID). The role
+  // switch only changes which dashboard view renders; filtering queries like
+  // "requisitions assigned to me" use currentAuthUser.id, not currentUserId.
   currentView = 'dashboard';
   selectedReqId = null;
   renderHeader();
@@ -4313,10 +4190,8 @@ function renderHeadTA() {
   
   const pending = requisitions.filter(r => r.status === 'ta_assignment');
   const active = requisitions.filter(r => r.status === 'active_sourcing');
-  // Real recruiters from the tenant (from tenant_members + profiles). Fall back
-  // to demo USERS only when there are no real recruiters (i.e. admin preview mode).
-  const realRecruiters = Object.values(realUsersByUuid).filter(u => u.role === 'recruiter');
-  const recruiters = realRecruiters.length > 0 ? realRecruiters : USERS.filter(u => u.role === 'recruiter');
+  // Real recruiters from the tenant (from tenant_members + profiles).
+  const recruiters = Object.values(realUsersByUuid).filter(u => u.role === 'recruiter');
   const workload = recruiters.map(rec => ({ ...rec, openReqs: requisitions.filter(r => r.status === 'active_sourcing' && r.assignedRecruiters.includes(rec.id)).length }));
   const breaches = pending.filter(r => daysSince(getStageDate(r)) > 2).length;
   
@@ -4408,9 +4283,8 @@ function renderTADetail(reqId) {
   const r = requisitions.find(x => x.id === reqId);
   if (!r) return '<div class="empty">Not found</div>';
   
-  // Real recruiters from the tenant, with demo fallback for admins
-  const realRecruiters = Object.values(realUsersByUuid).filter(u => u.role === 'recruiter');
-  const recruiters = realRecruiters.length > 0 ? realRecruiters : USERS.filter(u => u.role === 'recruiter');
+  // Real recruiters from the tenant
+  const recruiters = Object.values(realUsersByUuid).filter(u => u.role === 'recruiter');
   const workload = recruiters.map(rec => ({ ...rec, openReqs: requisitions.filter(x => x.status === 'active_sourcing' && x.assignedRecruiters.includes(rec.id)).length })).sort((a,b) => a.openReqs - b.openReqs);
   const isReassign = r.status === 'active_sourcing';
   
@@ -4505,7 +4379,7 @@ async function assignRecruiters(reqId) {
 
   // Also sync the requisition_recruiters M:N table: delete existing rows for
   // this req, then insert the new set. Only UUIDs that map to real tenant
-  // members are persisted — legacy 'U009' etc are demo-only and can't be stored.
+  // members are persisted; unknown UUIDs are dropped defensively.
   const realChecked = checked.filter(uid => realUsersByUuid[uid]);
   if (r._dbId) {
     try {
@@ -4536,7 +4410,8 @@ function renderRecruiter() {
   if (currentView === 'req_detail' && selectedReqId) { main.innerHTML = renderRecruiterDetail(selectedReqId); return; }
   
   // ⭐ Filter by real auth UUID for non-admins so each recruiter sees only their
-  // own assignments. Admins keep legacy 'U009' behavior for seed data preview.
+  // own assignments. Admins use currentUserId (their own auth UUID too, since
+  // the legacy demo-ID fallback was retired).
   const isAdmin = currentMember?.role === 'admin';
   const myId = isAdmin ? currentUserId : currentAuthUser?.id;
   const allAssigned = requisitions.filter(r => r.assignedRecruiters.includes(myId));
