@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ISI Group Talent</title>
-<!-- build: 2026-04-22-v22 Retired legacy U00X/U01X demo IDs + USERS array + generateSeedData dead code -->
+<!-- build: 2026-04-22-v24 Recruiter detail now shows approval history + expandable activity log -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1271,7 +1271,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v22';
+const HWM_BUILD = '2026-04-22-v24';
 console.log('%cISI Group Talent', 'color:#011e41;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -4546,6 +4546,37 @@ function renderRecruiterDetail(reqId) {
           </div>
         </div>
       </div>
+
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">${t('sec_approval_chain') || 'Approval History'}</div></div>
+        <div class="panel-body">
+          <div class="detail-row"><span class="detail-label">${t('th_submitted')}</span><span class="detail-value">${formatDate(r.submittedAt)}</span></div>
+          ${r.hrbpApprovedAt ? `<div class="detail-row"><span class="detail-label">${t('th_hrbp_approved') || 'HRBP Approved'}</span><span class="detail-value">${formatDate(r.hrbpApprovedAt)}</span></div>` : ''}
+          ${r.fhApprovedAt ? `<div class="detail-row"><span class="detail-label">Function Head Approved</span><span class="detail-value">${formatDate(r.fhApprovedAt)}</span></div>` : ''}
+          ${r.ceoApprovedAt ? `<div class="detail-row"><span class="detail-label">CEO Approved</span><span class="detail-value">${formatDate(r.ceoApprovedAt)}</span></div>` : ''}
+          ${r.taAssignedAt ? `<div class="detail-row"><span class="detail-label">Assigned to TA</span><span class="detail-value">${formatDate(r.taAssignedAt)}</span></div>` : ''}
+          ${(() => {
+            const reqActivities = activities.filter(a => a.reqId === r.id).sort((a,b) => new Date(b.date) - new Date(a.date));
+            if (reqActivities.length === 0) return '';
+            return `
+              <details style="margin-top: 0.75rem; border-top: 1px solid var(--rule); padding-top: 0.75rem;">
+                <summary style="cursor: pointer; color: var(--ink-2); font-size: 0.875rem;">${t('sec_activity') || 'Full activity log'} (${reqActivities.length})</summary>
+                <div class="activity-feed" style="margin-top: 0.75rem;">
+                  ${reqActivities.map(a => `
+                    <div class="activity-item">
+                      <div class="activity-dot"></div>
+                      <div class="activity-content">
+                        <div class="activity-date">${formatDate(a.date)}</div>
+                        <div class="activity-text">${a.text}</div>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              </details>
+            `;
+          })()}
+        </div>
+      </div>
       
       <details class="collapsible">
         <summary>${t('sec_justification')} & ${t('sec_jd')}</summary>
@@ -4557,7 +4588,10 @@ function renderRecruiterDetail(reqId) {
           <h3 class="mt-2">${t('sec_jd')}</h3>
           <div class="jd-viewer" style="padding: 1.25rem;">
             <div style="color: var(--ink-4);">${ICONS.doc}</div>
-            <div class="jd-filename">${r.jdFilename}</div>
+            <div class="jd-filename">${r.jdFilename || '<em>No JD uploaded</em>'}</div>
+            ${r.jdStoragePath
+              ? `<button class="btn btn-secondary btn-sm mt-2" onclick="viewJD('${r._dbId}')">${t('btn_view_jd') || 'View JD'}</button>`
+              : `<div class="jd-note">${r.jdFilename ? 'Legacy JD (re-upload to view)' : ''}</div>`}
           </div>
         </div>
       </details>
