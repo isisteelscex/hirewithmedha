@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ISI Group Talent</title>
-<!-- build: 2026-04-22-v31 CV parsing v2: structured extraction (font size + line grouping), better name detection + phone validation -->
+<!-- build: 2026-04-22-v32 CV auto-fill UI hidden — accuracy too low for production; parsing code dormant, ready for LLM enhancement (Session B) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1287,7 +1287,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v31';
+const HWM_BUILD = '2026-04-22-v32';
 console.log('%cISI Group Talent', 'color:#011e41;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -5246,18 +5246,14 @@ function addCandidate(reqId) {
     <div class="modal-header"><h2>${t('modal_add_cand')}</h2><button class="modal-close" onclick="closeModal()">×</button></div>
     <p class="modal-desc">${t('modal_add_cand_desc')}</p>
     <div class="form-grid-2">
-      <div class="form-group"><label class="required">${t('lbl_full_name')}<span id="hintCandName" class="autofill-hint" style="display:none;">${t('lbl_autofill') || 'verify'}</span></label><input type="text" id="candName" oninput="onCandFieldEdit('candName')"></div>
-      <div class="form-group"><label class="required">${t('lbl_email')}<span id="hintCandEmail" class="autofill-hint" style="display:none;">${t('lbl_autofill') || 'verify'}</span></label><input type="email" id="candEmail" oninput="onCandFieldEdit('candEmail')"></div>
+      <div class="form-group"><label class="required">${t('lbl_full_name')}</label><input type="text" id="candName"></div>
+      <div class="form-group"><label class="required">${t('lbl_email')}</label><input type="email" id="candEmail"></div>
     </div>
     <div class="form-grid-2">
-      <div class="form-group"><label class="required">${t('lbl_phone')}<span id="hintCandPhone" class="autofill-hint" style="display:none;">${t('lbl_autofill') || 'verify'}</span></label><input type="text" id="candPhone" oninput="onCandFieldEdit('candPhone')" placeholder="+855 12 345 678"></div>
+      <div class="form-group"><label class="required">${t('lbl_phone')}</label><input type="text" id="candPhone" placeholder="+855 12 345 678"></div>
       <div class="form-group"><label class="required">${t('lbl_source')}</label><select id="candSource"><option>LinkedIn</option><option>Referral</option><option>Job Board</option><option>Direct Apply</option><option>Other</option></select></div>
     </div>
-    <div class="form-group">
-      <label class="required">${t('lbl_cv')}</label>
-      <input type="file" id="candCV" accept=".pdf" onchange="onCandCVSelected(this)">
-      <div id="cvParseStatus" class="cv-parse-status"></div>
-    </div>
+    <div class="form-group"><label class="required">${t('lbl_cv')}</label><input type="file" id="candCV" accept=".pdf"></div>
     <div class="form-group"><label>${t('lbl_notes')}</label><textarea id="candNotes" rows="3"></textarea></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">${t('btn_cancel')}</button>
