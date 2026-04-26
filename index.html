@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ISI Group Talent</title>
-<!-- build: 2026-04-22-v30 CV auto-fill (browser-side regex/heuristics, PDPL-clean): name/email/phone with verify indicator -->
+<!-- build: 2026-04-22-v31 CV parsing v2: structured extraction (font size + line grouping), better name detection + phone validation -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1287,7 +1287,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v30';
+const HWM_BUILD = '2026-04-22-v31';
 console.log('%cISI Group Talent', 'color:#011e41;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -5030,13 +5030,14 @@ async function onCandCVSelected(fileInput) {
   }
   if (status) { status.textContent = (t('msg_parsing_cv') || 'Reading CV…'); status.className = 'cv-parse-status'; }
   try {
-    const text = await extractPDFText(file);
-    if (!text || text.trim().length < 20) {
+    const extracted = await extractPDFText(file);
+    // extractPDFText returns { text, lines, firstPageItems }
+    if (!extracted || !extracted.text || extracted.text.trim().length < 20) {
       // Most likely a scanned/image-based PDF with no extractable text
       if (status) { status.textContent = (t('msg_cv_no_text') || 'CV has no text — please fill fields manually'); status.className = 'cv-parse-status error'; }
       return;
     }
-    const guesses = parseCVText(text);
+    const guesses = parseCVText(extracted);
     let filled = 0;
     if (guesses.email) { setAutofilled('candEmail', guesses.email); filled++; }
     if (guesses.phone) { setAutofilled('candPhone', guesses.phone); filled++; }
@@ -5050,82 +5051,163 @@ async function onCandCVSelected(fileInput) {
         status.className = 'cv-parse-status success';
       }
     }
+    // Stash the last extraction on window for live debugging from the console.
+    // No PII is logged automatically; this is opt-in for the recruiter who
+    // wants to share what the parser saw.
+    window._lastCVExtraction = extracted;
   } catch (e) {
     console.error('CV parse failed:', e);
     if (status) { status.textContent = (t('msg_cv_parse_err') || 'Could not read CV — please fill manually'); status.className = 'cv-parse-status error'; }
   }
 }
 
-// Extract all text content from a PDF File using pdf.js. Returns a single
-// string concatenating every page's text in document order.
+// Extract structured text from a PDF File using pdf.js. Returns:
+//   { text: <flat string for regex>, lines: [{text, fontSize}], firstPageItems: [...] }
+// The richer structure lets the name heuristic look at actual lines (grouped
+// by y-coordinate) and font size — both critical for finding the name on
+// real-world CVs.
 async function extractPDFText(file) {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  let allText = '';
-  // Cap at 5 pages — CVs rarely have contact info beyond page 1, and we
-  // avoid wasting cycles on long documents.
+  const allLines = [];
+  let firstPageItems = [];
+  let flatText = '';
+  // Cap at 5 pages — CVs rarely have contact info beyond page 1.
   const maxPages = Math.min(pdf.numPages, 5);
-  for (let i = 1; i <= maxPages; i++) {
-    const page = await pdf.getPage(i);
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
     const tc = await page.getTextContent();
-    const pageText = tc.items.map(it => it.str).join(' ');
-    allText += pageText + '\n';
+    if (pageNum === 1) firstPageItems = tc.items;
+    // Group text items by Y-coordinate to reconstruct visual lines.
+    // pdf.js y-coordinate decreases as we go down; we round to nearest 2px
+    // so items on the same row group together even if there's slight drift.
+    const rows = new Map();
+    for (const it of tc.items) {
+      if (!it.str || !it.str.trim()) continue;
+      const y = Math.round((it.transform?.[5] ?? 0) / 2) * 2;
+      const fontSize = Math.abs(it.transform?.[3] ?? it.height ?? 10);
+      if (!rows.has(y)) rows.set(y, { items: [], maxFont: 0 });
+      const row = rows.get(y);
+      row.items.push(it.str);
+      if (fontSize > row.maxFont) row.maxFont = fontSize;
+    }
+    // Sort rows by y descending (top of page first in PDF coords)
+    const sortedRows = [...rows.entries()].sort((a, b) => b[0] - a[0]);
+    for (const [, row] of sortedRows) {
+      const text = row.items.join(' ').replace(/\s+/g, ' ').trim();
+      if (text) allLines.push({ text, fontSize: row.maxFont, page: pageNum });
+    }
+    flatText += sortedRows.map(([, r]) => r.items.join(' ')).join('\n') + '\n';
   }
-  return allText;
+  return { text: flatText, lines: allLines, firstPageItems };
 }
 
-// Run regex + heuristics over the extracted text. Returns
-// { name, email, phone } where each field is a string or null.
-function parseCVText(text) {
+// Pretty-printable summary for debugging via console.
+function debugCVExtraction(extracted) {
+  console.log('--- CV EXTRACTION DEBUG ---');
+  console.log('Total lines:', extracted.lines.length);
+  console.log('First 10 lines (with font sizes):');
+  for (const l of extracted.lines.slice(0, 10)) {
+    console.log(`  [page ${l.page}] [${l.fontSize.toFixed(1)}px] ${l.text}`);
+  }
+  console.log('Parser output:', parseCVText(extracted));
+}
+
+// Run regex + heuristics over the extracted CV. Accepts either:
+//   - the new structured object { text, lines, firstPageItems }
+//   - or a plain string (back-compat)
+// Returns { name, email, phone } where each field is a string or null.
+function parseCVText(extracted) {
+  // Normalize: accept both shapes
+  const isStructured = extracted && typeof extracted === 'object' && 'text' in extracted;
+  const text = isStructured ? extracted.text : (extracted || '');
+  const lines = isStructured ? extracted.lines : null;
   const out = { name: null, email: null, phone: null };
 
-  // ---- Email: easy. Match anything that looks like an email; pick the first.
-  // Excludes common false positives like example@example.com if found.
+  // ---- Email
   const emailMatches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
   if (emailMatches) {
     const real = emailMatches.find(m => !/example\.|test@|noreply|donotreply/i.test(m));
     if (real) out.email = real.trim();
   }
 
-  // ---- Phone: try Cambodia-specific patterns first, then generic.
-  // Cambodia: country code +855 OR leading 0, followed by 8-9 digits total.
-  // We accept various separators (space, dot, dash) between groups.
+  // ---- Phone: extract candidates, then validate.
+  // We collect ALL plausible phone-like strings, then filter out things that
+  // are obviously NOT phone numbers (dates, postal codes, ID numbers).
+  const candidates = [];
   const phonePatterns = [
-    // +855 prefix, with or without space/dash
-    /(?:\+?855|00\s?855)[\s\-.]?(\d[\s\-.]?){7,9}\d/g,
-    // Cambodian local format starting with 0, e.g. 012 345 678 or 0123456789
-    /\b0(?:[1-9]\d?)[\s\-.]?\d{3}[\s\-.]?\d{3,4}\b/g,
-    // Generic international, 10-15 digits with optional + and separators
-    /\+\d{1,3}[\s\-.]?\d{1,4}[\s\-.]?\d{3,4}[\s\-.]?\d{3,4}/g,
+    /(?:\+?855|00\s?855)[\s\-.]?[\d\s\-.()]{7,15}/g,                // +855 prefix
+    /\b0(?:[1-9]\d?)[\s\-.]?\d{3}[\s\-.]?\d{3,4}\b/g,               // Cambodian local
+    /\+\d{1,3}[\s\-.]?\d{1,4}[\s\-.]?\d{3,4}[\s\-.]?\d{3,4}/g,      // Generic intl
+    /\b\d{3}[\s\-.]\d{3}[\s\-.]\d{3,4}\b/g,                          // 3-3-4 grouped
   ];
   for (const pat of phonePatterns) {
-    const m = text.match(pat);
-    if (m && m.length) {
-      // Pick the first match, normalize whitespace
-      out.phone = m[0].replace(/\s+/g, ' ').trim();
+    const matches = text.match(pat) || [];
+    candidates.push(...matches);
+  }
+  // Validate: digit count must be reasonable (8-15), and reject things that
+  // look like dates (e.g. 2024-05-12 or 12/05/2024).
+  const validPhone = candidates.find(raw => {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15) return false;
+    // Reject if it looks like a date (year-like leading digits or contains ' / ')
+    if (/^(19|20)\d{2}/.test(raw.trim())) return false;
+    if (/\d+\s*\/\s*\d+\s*\/\s*\d+/.test(raw)) return false;
+    return true;
+  });
+  if (validPhone) out.phone = validPhone.replace(/\s+/g, ' ').trim();
+
+  // ---- Name: structured-aware heuristic.
+  // Strategy when structured lines are available:
+  //   1. Look at lines on page 1 only
+  //   2. Score each line by: font size (bigger = better), position (higher = better),
+  //      "name-likeness" (2-4 cap words, no digits/email, not a heading)
+  //   3. Pick the highest-scoring line as the name
+  // Strategy fallback (string only): scan first 30 lines split by newlines.
+  if (lines && lines.length) {
+    const stopwords = /\b(curriculum vitae|resume|\bcv\b|address|email|phone|tel|mobile|linkedin|website|nationality|date of birth|gender|profile|summary|objective|education|experience|skills|references|career|professional)\b/i;
+    let best = null;
+    let bestScore = -1;
+    // Only consider page 1, and only the first 20 lines on it
+    const pageOneLines = lines.filter(l => l.page === 1).slice(0, 20);
+    // Find max font size on page 1 to normalize the size score
+    const maxFont = pageOneLines.reduce((m, l) => Math.max(m, l.fontSize), 0) || 1;
+    for (let i = 0; i < pageOneLines.length; i++) {
+      const l = pageOneLines[i];
+      const t = (l.text || '').trim();
+      if (t.length < 3 || t.length > 80) continue;
+      if (/[\d@]/.test(t)) continue;
+      if (stopwords.test(t)) continue;
+      // Word-count check: 2-5 word-like tokens, mostly capitalized
+      const words = t.split(/\s+/).filter(w => /^[A-Za-z\u1780-\u17FF.\-']{2,}$/.test(w));
+      if (words.length < 2 || words.length > 5) continue;
+      const capWords = words.filter(w => /^[A-Z]/.test(w));
+      if (capWords.length / words.length < 0.5) continue;
+      // Score: bigger font is much better, earlier position is slightly better
+      const fontScore = (l.fontSize / maxFont) * 100;
+      const positionScore = Math.max(0, 20 - i);  // earlier lines get a small bonus
+      const score = fontScore + positionScore;
+      if (score > bestScore) {
+        bestScore = score;
+        best = words.join(' ');
+      }
+    }
+    if (best) out.name = best;
+  } else {
+    // Fallback: old line-by-line scan if we don't have structured lines
+    const fallbackLines = text.split(/\n+/).map(s => s.trim()).filter(Boolean).slice(0, 30);
+    const stopwords = /\b(curriculum vitae|resume|cv|address|email|phone|tel|mobile|linkedin|website|nationality|date of birth|gender|profile|summary|objective|education|experience|skills)\b/i;
+    for (const line of fallbackLines) {
+      if (line.length < 4 || line.length > 80) continue;
+      if (/[\d@]/.test(line)) continue;
+      if (stopwords.test(line)) continue;
+      const words = line.split(/\s+/).filter(w => /^[A-Za-z\u1780-\u17FF.\-']{2,}$/.test(w));
+      if (words.length < 2 || words.length > 5) continue;
+      const capWords = words.filter(w => /^[A-Z]/.test(w));
+      if (capWords.length / words.length < 0.5) continue;
+      out.name = words.join(' ');
       break;
     }
-  }
-
-  // ---- Name: hardest. Heuristic-based.
-  // Strategy: scan the first 30 lines, find the first line that looks like
-  // a person's name (2-4 words, mostly letters, mostly capitalized,
-  // no digits, not an email, not a heading like "Curriculum Vitae" or "Resume").
-  const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean).slice(0, 30);
-  const nameStopwords = /\b(curriculum vitae|resume|cv|address|email|phone|tel|mobile|linkedin|website|nationality|date of birth|gender|profile|summary|objective|education|experience|skills)\b/i;
-  for (const line of lines) {
-    if (line.length < 4 || line.length > 80) continue;
-    if (/[\d@]/.test(line)) continue;        // skip lines with digits or emails
-    if (nameStopwords.test(line)) continue;  // skip heading-like lines
-    // Word-counting: split on whitespace, keep tokens that are mostly letters
-    const words = line.split(/\s+/).filter(w => /^[A-Za-z\u1780-\u17FF.\-']{2,}$/.test(w));
-    if (words.length < 2 || words.length > 5) continue;
-    // Heuristic: at least half the words start with an uppercase letter
-    // (or are full uppercase, common for Khmer names like "OT CHANDY")
-    const capWords = words.filter(w => /^[A-Z]/.test(w));
-    if (capWords.length / words.length < 0.5) continue;
-    out.name = words.join(' ');
-    break;
   }
 
   return out;
