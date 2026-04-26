@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ISI Group Talent</title>
-<!-- build: 2026-04-22-v28 JD Library Phase 2: admin/head_ta page to upload, view, replace, remove standard JDs -->
+<!-- build: 2026-04-22-v29 Translations: added EN+KM strings for JD Library, recruiter History, Head-of-TA All Reqs -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1272,7 +1272,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v28';
+const HWM_BUILD = '2026-04-22-v29';
 console.log('%cISI Group Talent', 'color:#011e41;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -1564,6 +1564,58 @@ const TRANSLATIONS = {
     chk_back: 'Background check completed',
     chk_crim: 'Criminal record check completed',
     chk_edu: 'Education verification completed',
+
+    // ⭐ JD Library + Head-of-TA visibility additions (v26+)
+    nav_jd_library: 'JD Library',
+    title_jd_library: 'JD Library',
+    sub_jd_library: 'Manage standard job descriptions for each role. JDs uploaded here will be auto-attached when a requester selects the matching role.',
+    eyebrow_admin: 'Administration',
+    lbl_search: 'Search',
+    lbl_jd_status: 'JD status',
+    ph_search_role: 'Role title…',
+    opt_all: 'All',
+    opt_all_functions: 'All functions',
+    opt_with_jd: 'With JD',
+    opt_without_jd: 'Missing JD',
+    metric_total_roles: 'Total roles',
+    metric_with_jd: 'With JD',
+    metric_without_jd: 'Missing JD',
+    metric_closed: 'Closed',
+    metric_total_reqs: 'total',
+    sec_roles: 'Roles',
+    sec_history: 'History',
+    sec_workload_perf: 'Team workload & performance',
+    sec_all_reqs_title: 'All requisitions — end-to-end',
+    tab_all_reqs: 'All requisitions',
+    th_function: 'Function',
+    th_role: 'Role',
+    th_grade: 'Grade',
+    th_jd_status: 'JD status',
+    th_filename: 'Filename',
+    th_actions: 'Actions',
+    th_recruiter: 'Recruiter',
+    th_current_stage: 'Currently with',
+    th_closed_date: 'Closed',
+    st_has_jd: 'Has JD',
+    st_no_jd: 'No JD',
+    btn_view: 'View',
+    btn_upload: 'Upload',
+    btn_replace: 'Replace',
+    btn_remove: 'Remove',
+    btn_back_dash: 'Dashboard',
+    jd_from_library: 'Standard JD attached from library',
+    msg_uploading: 'Uploading…',
+    msg_uploaded: 'JD uploaded ✓',
+    msg_removed: 'JD removed',
+    confirm_remove_jd: 'Remove the standard JD for',
+    err_no_access: 'No access',
+    err_pdf_only: 'Only PDF files are allowed.',
+    err_too_big: 'File too large (max 10MB).',
+    empty_no_reqs: 'No requisitions yet',
+    empty_no_roles_match: 'No roles match your filters',
+    txt_complete: 'complete',
+    txt_to_upload: 'to upload',
+    txt_of: 'of',
   },
   km: {
     product_name: 'ប្រព័ន្ធជ្រើសរើសបុគ្គលិក',
@@ -1748,6 +1800,58 @@ const TRANSLATIONS = {
     chk_back: 'ការពិនិត្យប្រវត្តិបានបញ្ចប់',
     chk_crim: 'ការពិនិត្យកំណត់ត្រាបទល្មើសបានបញ្ចប់',
     chk_edu: 'ការផ្ទៀងផ្ទាត់ការសិក្សាបានបញ្ចប់',
+
+    // ⭐ JD Library + Head-of-TA visibility additions (v26+)
+    nav_jd_library: 'បណ្ណាល័យឯកសារការងារ',
+    title_jd_library: 'បណ្ណាល័យឯកសារការងារ',
+    sub_jd_library: 'គ្រប់គ្រងឯកសារពិពណ៌នាការងារស្តង់ដារសម្រាប់តួនាទីនីមួយៗ។ ឯកសារដែលផ្ទុកនៅទីនេះនឹងភ្ជាប់ស្វ័យប្រវត្តិពេលអ្នកស្នើសុំជ្រើសរើសតួនាទី។',
+    eyebrow_admin: 'ការគ្រប់គ្រង',
+    lbl_search: 'ស្វែងរក',
+    lbl_jd_status: 'ស្ថានភាពឯកសារ',
+    ph_search_role: 'ឈ្មោះតួនាទី…',
+    opt_all: 'ទាំងអស់',
+    opt_all_functions: 'ផ្នែកទាំងអស់',
+    opt_with_jd: 'មានឯកសារ',
+    opt_without_jd: 'គ្មានឯកសារ',
+    metric_total_roles: 'តួនាទីសរុប',
+    metric_with_jd: 'មានឯកសារ',
+    metric_without_jd: 'គ្មានឯកសារ',
+    metric_closed: 'បានបិទ',
+    metric_total_reqs: 'សរុប',
+    sec_roles: 'តួនាទី',
+    sec_history: 'ប្រវត្តិ',
+    sec_workload_perf: 'បន្ទុកការងារ និងសមត្ថភាពក្រុម',
+    sec_all_reqs_title: 'សំណើរការទាំងអស់ — ពីដើមដល់ចប់',
+    tab_all_reqs: 'សំណើរទាំងអស់',
+    th_function: 'ផ្នែក',
+    th_role: 'តួនាទី',
+    th_grade: 'កម្រិត',
+    th_jd_status: 'ស្ថានភាពឯកសារ',
+    th_filename: 'ឈ្មោះឯកសារ',
+    th_actions: 'សកម្មភាព',
+    th_recruiter: 'អ្នកជ្រើសរើស',
+    th_current_stage: 'កំពុងស្ថិតនៅ',
+    th_closed_date: 'បានបិទ',
+    st_has_jd: 'មានឯកសារ',
+    st_no_jd: 'គ្មានឯកសារ',
+    btn_view: 'មើល',
+    btn_upload: 'ផ្ទុកឡើង',
+    btn_replace: 'ជំនួស',
+    btn_remove: 'លុប',
+    btn_back_dash: 'ផ្ទាំងគ្រប់គ្រង',
+    jd_from_library: 'ភ្ជាប់ឯកសារពីបណ្ណាល័យ',
+    msg_uploading: 'កំពុងផ្ទុកឡើង…',
+    msg_uploaded: 'ផ្ទុកឡើងបានជោគជ័យ ✓',
+    msg_removed: 'លុបឯកសារ',
+    confirm_remove_jd: 'លុបឯកសារស្តង់ដារសម្រាប់',
+    err_no_access: 'មិនមានសិទ្ធិ',
+    err_pdf_only: 'អនុញ្ញាតតែឯកសារ PDF ប៉ុណ្ណោះ។',
+    err_too_big: 'ឯកសារធំពេក (អតិបរមា 10MB)។',
+    empty_no_reqs: 'មិនទាន់មានសំណើរ',
+    empty_no_roles_match: 'គ្មានតួនាទីត្រូវនឹងតម្រងរបស់អ្នក',
+    txt_complete: 'បានបញ្ចប់',
+    txt_to_upload: 'ត្រូវផ្ទុកឡើង',
+    txt_of: 'នៃ',
   }
 };
 
