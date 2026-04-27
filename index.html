@@ -7,7 +7,7 @@
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ISI Group Talent</title>
-<!-- build: 2026-04-22-v33 Head of TA: 'All requisitions' is now the default landing tab (proactive end-to-end visibility) -->
+<!-- build: 2026-04-22-v34 TA team feedback batch (27 Apr): email optional, 'Applicant' wording, criminal-check optional, COI check added (4/5 items; revision flow → v35) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Khmer:wght@400;500;600;700&family=Noto+Serif+Khmer:wght@400;500;600&display=swap" rel="stylesheet">
@@ -1287,7 +1287,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // Build version marker — visible in console so we can verify which build a user has cached
-const HWM_BUILD = '2026-04-22-v33';
+const HWM_BUILD = '2026-04-22-v34';
 console.log('%cISI Group Talent', 'color:#011e41;font-weight:600;font-size:14px', `build ${HWM_BUILD}`);
 
 // Current session state
@@ -1639,6 +1639,17 @@ const TRANSLATIONS = {
     msg_cv_no_match: 'No fields detected — please fill manually',
     msg_cv_no_text: 'CV has no text — please fill fields manually',
     msg_cv_parse_err: 'Could not read CV — please fill manually',
+
+    // ⭐ v34 — TA team feedback 27 Apr
+    modal_add_applicant: 'Add applicant',
+    modal_add_applicant_desc: 'Add a new applicant to the sourcing pipeline.',
+    btn_add_applicant: 'Add applicant',
+    lbl_applicant_cv: 'Applicant CV',
+    chk_coi: 'Conflict of Interest (COI) check completed',
+    btn_revise_resubmit: 'Revise & Resubmit',
+    modal_revise_title: 'Revise requisition',
+    modal_revise_desc: 'Address the revision notes from the approver, edit fields as needed, then resubmit. The requisition will go back to HRBP review.',
+    banner_revisions: 'Revisions requested. Click "Revise & Resubmit" below to update and re-send for approval.',
   },
   km: {
     product_name: 'ប្រព័ន្ធជ្រើសរើសបុគ្គលិក',
@@ -1883,6 +1894,17 @@ const TRANSLATIONS = {
     msg_cv_no_match: 'រកមិនឃើញព័ត៌មាន — សូមបំពេញដោយដៃ',
     msg_cv_no_text: 'ឯកសារនេះគ្មានអក្សរទេ — សូមបំពេញដោយដៃ',
     msg_cv_parse_err: 'មិនអាចអានឯកសារ — សូមបំពេញដោយដៃ',
+
+    // ⭐ v34 — TA team feedback 27 Apr
+    modal_add_applicant: 'បន្ថែមបេក្ខជន',
+    modal_add_applicant_desc: 'បន្ថែមបេក្ខជនថ្មីទៅក្នុងបណ្តុំស្វែងរក។',
+    btn_add_applicant: 'បន្ថែមបេក្ខជន',
+    lbl_applicant_cv: 'ប្រវត្តិរូបបេក្ខជន',
+    chk_coi: 'ការពិនិត្យជម្លោះផលប្រយោជន៍ (COI) បានបញ្ចប់',
+    btn_revise_resubmit: 'កែសម្រួល និងផ្ញើឡើងវិញ',
+    modal_revise_title: 'កែសម្រួលសំណើ',
+    modal_revise_desc: 'ដោះស្រាយតាមកំណត់ចំណាំពីអ្នកអនុម័ត កែសម្រួលប្រអប់តាមតម្រូវការ ហើយផ្ញើឡើងវិញ។ សំណើនឹងវិលត្រឡប់ទៅការពិនិត្យ HRBP។',
+    banner_revisions: 'បានស្នើសុំការកែសម្រួល។ ចុច "កែសម្រួល និងផ្ញើឡើងវិញ" ខាងក្រោមដើម្បីធ្វើបច្ចុប្បន្នភាព និងផ្ញើឡើងវិញសម្រាប់ការអនុម័ត។',
   }
 };
 
@@ -2076,6 +2098,7 @@ function candFromDb(row, appRow) {
       background: !!appRow?.checks_background,
       criminal: !!appRow?.checks_criminal,
       education: !!appRow?.checks_education,
+      coi: !!appRow?.checks_coi,
       notes: appRow?.checks_notes || ''
     },
     offer: appRow?.offer_status ? {
@@ -2407,6 +2430,7 @@ async function saveSingleCandidate(c) {
     checks_background: !!c.preEmploymentChecks?.background,
     checks_criminal: !!c.preEmploymentChecks?.criminal,
     checks_education: !!c.preEmploymentChecks?.education,
+    checks_coi: !!c.preEmploymentChecks?.coi,
     checks_notes: c.preEmploymentChecks?.notes || null,
     offer_salary: c.offer?.salary ?? null,
     offer_grade: c.offer?.grade ?? null,
@@ -2482,6 +2506,7 @@ async function saveCandidates(list) {
       checks_background: !!c.preEmploymentChecks?.background,
       checks_criminal: !!c.preEmploymentChecks?.criminal,
       checks_education: !!c.preEmploymentChecks?.education,
+      checks_coi: !!c.preEmploymentChecks?.coi,
       checks_notes: c.preEmploymentChecks?.notes || null,
       offer_salary: c.offer?.salary ?? null,
       offer_grade: c.offer?.grade ?? null,
@@ -4973,7 +4998,9 @@ function renderCandCard(c, isOnHold = false) {
   } else if (c.stage === 'interview') {
     actions = `<button class="btn btn-secondary" onclick="addFeedback('${c.id}')" ${dis}>Feedback</button><button class="btn btn-primary" onclick="moveCandidate('${c.id}', 'preemployment')" ${dis}>Pre-emp</button><button class="btn btn-danger" onclick="rejectCandidate('${c.id}')" ${dis}>${ICONS.x}</button>`;
   } else if (c.stage === 'preemployment') {
-    const allOK = c.preEmploymentChecks && c.preEmploymentChecks.reference && c.preEmploymentChecks.background && c.preEmploymentChecks.criminal && c.preEmploymentChecks.education;
+    // Pre-employment "all checks pass" gating: required = reference, background, education, COI.
+    // Criminal record check is OPTIONAL (per TA team feedback 27 Apr — sometimes not applicable).
+    const allOK = c.preEmploymentChecks && c.preEmploymentChecks.reference && c.preEmploymentChecks.background && c.preEmploymentChecks.education && c.preEmploymentChecks.coi;
     actions = `<button class="btn btn-secondary" onclick="updateChecks('${c.id}')" ${dis}>Checks</button><button class="btn btn-primary" onclick="moveCandidate('${c.id}', 'offer')" ${allOK && !isOnHold ? '' : 'disabled'}>Offer</button><button class="btn btn-danger" onclick="rejectCandidate('${c.id}')" ${dis}>${ICONS.x}</button>`;
   } else if (c.stage === 'offer') {
     if (!c.offer) actions = `<button class="btn btn-primary" onclick="prepareOffer('${c.id}')" ${dis}>Prepare offer</button>`;
@@ -5243,21 +5270,21 @@ function onCandFieldEdit(inputId) {
 
 function addCandidate(reqId) {
   openModal(`
-    <div class="modal-header"><h2>${t('modal_add_cand')}</h2><button class="modal-close" onclick="closeModal()">×</button></div>
-    <p class="modal-desc">${t('modal_add_cand_desc')}</p>
+    <div class="modal-header"><h2>${t('modal_add_applicant') || 'Add applicant'}</h2><button class="modal-close" onclick="closeModal()">×</button></div>
+    <p class="modal-desc">${t('modal_add_applicant_desc') || 'Add a new applicant to the sourcing pipeline.'}</p>
     <div class="form-grid-2">
       <div class="form-group"><label class="required">${t('lbl_full_name')}</label><input type="text" id="candName"></div>
-      <div class="form-group"><label class="required">${t('lbl_email')}</label><input type="email" id="candEmail"></div>
+      <div class="form-group"><label>${t('lbl_email')}</label><input type="email" id="candEmail"></div>
     </div>
     <div class="form-grid-2">
       <div class="form-group"><label class="required">${t('lbl_phone')}</label><input type="text" id="candPhone" placeholder="+855 12 345 678"></div>
       <div class="form-group"><label class="required">${t('lbl_source')}</label><select id="candSource"><option>LinkedIn</option><option>Referral</option><option>Job Board</option><option>Direct Apply</option><option>Other</option></select></div>
     </div>
-    <div class="form-group"><label class="required">${t('lbl_cv')}</label><input type="file" id="candCV" accept=".pdf"></div>
+    <div class="form-group"><label class="required">${t('lbl_applicant_cv') || 'Applicant CV'}</label><input type="file" id="candCV" accept=".pdf"></div>
     <div class="form-group"><label>${t('lbl_notes')}</label><textarea id="candNotes" rows="3"></textarea></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">${t('btn_cancel')}</button>
-      <button class="btn btn-primary" onclick="submitCandidate('${reqId}')">${t('btn_add_cand')}</button>
+      <button class="btn btn-primary" onclick="submitCandidate('${reqId}')">${t('btn_add_applicant') || 'Add applicant'}</button>
     </div>
   `);
 }
@@ -5269,7 +5296,8 @@ async function submitCandidate(reqId) {
   const source = document.getElementById('candSource').value;
   const cvFile = document.getElementById('candCV').files[0];
   const notes = document.getElementById('candNotes').value;
-  if (!name || !email || !phone || !cvFile) { alert('Fill required fields'); return; }
+  // Email is now OPTIONAL (per TA team feedback 27 Apr) — name, phone, CV remain required.
+  if (!name || !phone || !cvFile) { alert('Fill required fields (name, phone, CV)'); return; }
   if (cvFile.type !== 'application/pdf') { alert('CV must be PDF'); return; }
   const newCand = { id: generateCandidateId(), reqId, name, email, phone, source, cvFilename: cvFile.name, notes, stage: 'sourcing', addedAt: new Date().toISOString(), stageChangedAt: new Date().toISOString(), interview: null, feedback: [], preEmploymentChecks: {}, offer: null, status: 'active' };
   candidates.push(newCand);
@@ -5397,8 +5425,9 @@ function updateChecks(candId) {
     <div class="form-group">
       <label class="checkbox-row"><input type="checkbox" id="chkRef" ${checks.reference ? 'checked' : ''}> ${t('chk_ref')}</label>
       <label class="checkbox-row"><input type="checkbox" id="chkBack" ${checks.background ? 'checked' : ''}> ${t('chk_back')}</label>
-      <label class="checkbox-row"><input type="checkbox" id="chkCrim" ${checks.criminal ? 'checked' : ''}> ${t('chk_crim')}</label>
+      <label class="checkbox-row"><input type="checkbox" id="chkCoi" ${checks.coi ? 'checked' : ''}> ${t('chk_coi') || 'Conflict of Interest (COI) check completed'}</label>
       <label class="checkbox-row"><input type="checkbox" id="chkEdu" ${checks.education ? 'checked' : ''}> ${t('chk_edu')}</label>
+      <label class="checkbox-row"><input type="checkbox" id="chkCrim" ${checks.criminal ? 'checked' : ''}> ${t('chk_crim')} <span class="text-xs text-muted">(optional)</span></label>
     </div>
     <div class="form-group"><label>${t('lbl_notes')}</label><textarea id="chkNotes" rows="3">${checks.notes || ''}</textarea></div>
     <div class="modal-actions">
@@ -5410,7 +5439,14 @@ function updateChecks(candId) {
 
 async function saveChecks(candId) {
   const c = candidates.find(x => x.id === candId);
-  c.preEmploymentChecks = { reference: document.getElementById('chkRef').checked, background: document.getElementById('chkBack').checked, criminal: document.getElementById('chkCrim').checked, education: document.getElementById('chkEdu').checked, notes: document.getElementById('chkNotes').value };
+  c.preEmploymentChecks = {
+    reference: document.getElementById('chkRef').checked,
+    background: document.getElementById('chkBack').checked,
+    criminal: document.getElementById('chkCrim').checked,
+    education: document.getElementById('chkEdu').checked,
+    coi: document.getElementById('chkCoi').checked,
+    notes: document.getElementById('chkNotes').value
+  };
   await persistCandidateChange(c, null);
 }
 
