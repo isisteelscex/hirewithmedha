@@ -2011,11 +2011,57 @@ function reqFromDb(row) {
   };
 }
 
+/* ===== ENTITY RESOLVER (defensive) =====
+   Robustly look up a department/sub_function/unit ID from a name.
+   Handles:
+   - Empty/null input → returns null
+   - Missing deptMaps → logs warning, returns null
+   - Case-insensitive fallback if exact match fails
+   - Whitespace trimming
+   Logs to console with [ENTITY-RESOLVE] prefix when something goes wrong.
+*/
+function resolveDeptId(level, rawName) {
+  // No selection? Nothing to resolve. Not an error.
+  if (!rawName || (typeof rawName === 'string' && rawName.trim() === '')) {
+    return null;
+  }
+
+  const name = String(rawName).trim();
+
+  // Bail loudly if the dept cache wasn't built — this is the bug we're hunting.
+  if (!deptMaps || !deptMaps.byName || Object.keys(deptMaps.byName).length === 0) {
+    console.warn('[ENTITY-RESOLVE] deptMaps not loaded; cannot resolve', level, '→', name,
+      '— req will be saved with NULL for this field. Re-load the page and try again.');
+    return null;
+  }
+
+  // Exact match (the original code path)
+  const exact = deptMaps.byName[`${level}:${name}`];
+  if (exact?.id) return exact.id;
+
+  // Case-insensitive fallback — in case the form value differs in casing/spacing
+  // from what's stored in the departments table.
+  const target = name.toLowerCase();
+  for (const key of Object.keys(deptMaps.byName)) {
+    const [keyLevel, keyName] = key.split(':');
+    if (keyLevel === level && keyName.toLowerCase().trim() === target) {
+      console.warn(`[ENTITY-RESOLVE] case/whitespace mismatch resolved: form sent "${name}" → matched DB "${keyName}"`);
+      return deptMaps.byName[key].id;
+    }
+  }
+
+  // Truly unresolvable. Log the candidates for debugging.
+  const candidates = Object.keys(deptMaps.byName).filter(k => k.startsWith(level + ':')).slice(0, 8);
+  console.warn(`[ENTITY-RESOLVE] could not resolve ${level} "${name}". First few available ${level}s:`, candidates);
+  return null;
+}
+
 function reqToDb(r) {
   // Map camelCase -> snake_case for INSERT/UPDATE
-  const fnId = r.function    ? deptMaps.byName[`function:${r.function}`]?.id         : null;
-  const sfId = r.subFunction ? deptMaps.byName[`sub_function:${r.subFunction}`]?.id  : null;
-  const unId = r.unit        ? deptMaps.byName[`unit:${r.unit}`]?.id                 : null;
+  // Use the robust resolver (handles missing deptMaps, case mismatches, etc.)
+  const fnId = resolveDeptId('function',     r.function);
+  const sfId = resolveDeptId('sub_function', r.subFunction);
+  const unId = resolveDeptId('unit',         r.unit);
   // Look up the role by legacyId first (unique per row). Fall back to byTitle for
   // legacy reqs that still use the title-only path.
   const roleLibId = r.roleId
@@ -2347,6 +2393,8 @@ async function saveRequisitions(list) {
   // For each req in list, upsert to DB
   for (const r of list) {
     const dbPayload = reqToDb(r);
+    // Defensive: if any entity ID came back null despite a form value, query DB directly.
+    await enrichEntityIdsFromDb(r, dbPayload);
     if (r._dbId) {
       // Update existing
       const { error } = await sb.from('requisitions').update(dbPayload).eq('id', r._dbId);
@@ -2364,8 +2412,59 @@ async function saveRequisitions(list) {
 // Targeted insert/update for ONE requisition. Faster than saveRequisitions when
 // you know exactly which row changed. Also lets callers await the result so
 // downstream activity logging sees the freshly-set _dbId.
+/* ===== ENTITY ID FALLBACK FROM DB =====
+   If reqToDb returned null IDs for fields that the form actually filled,
+   query the departments table directly as a last resort. This handles the
+   case where deptMaps somehow didn't load but the database still has valid data.
+   Mutates dbPayload in place. Safe no-op if everything already resolved.
+*/
+async function enrichEntityIdsFromDb(r, dbPayload) {
+  // Build list of (formValue, level, payloadKey) tuples that need backfill.
+  const checks = [
+    { formValue: r.function,    level: 'function',     key: 'department_id'   },
+    { formValue: r.subFunction, level: 'sub_function', key: 'sub_function_id' },
+    { formValue: r.unit,        level: 'unit',         key: 'unit_id'         },
+  ];
+
+  // Only check ones where the form had a value but the payload is null.
+  const needBackfill = checks.filter(c =>
+    c.formValue && String(c.formValue).trim() !== '' && !dbPayload[c.key]
+  );
+
+  if (needBackfill.length === 0) return; // happy path
+
+  console.warn('[ENTITY-DB-FALLBACK] reqToDb returned null for', needBackfill.map(c => c.level).join(', '),
+    '— querying departments table directly');
+
+  for (const c of needBackfill) {
+    try {
+      const { data, error } = await sb.from('departments')
+        .select('id, name, level')
+        .eq('tenant_id', currentTenantId)
+        .eq('level', c.level)
+        .ilike('name', String(c.formValue).trim())  // case-insensitive
+        .is('deleted_at', null)
+        .limit(1);
+      if (error) {
+        console.error('[ENTITY-DB-FALLBACK] query failed for', c.level, error.message);
+        continue;
+      }
+      if (data && data.length > 0) {
+        dbPayload[c.key] = data[0].id;
+        console.log('[ENTITY-DB-FALLBACK] resolved', c.level, '"' + c.formValue + '" →', data[0].id);
+      } else {
+        console.warn('[ENTITY-DB-FALLBACK] no match in DB for', c.level, '"' + c.formValue + '"');
+      }
+    } catch (e) {
+      console.error('[ENTITY-DB-FALLBACK] unexpected error', e);
+    }
+  }
+}
+
 async function saveSingleRequisition(r) {
   const dbPayload = reqToDb(r);
+  // Defensive: if any entity ID came back null despite a form value, query DB directly.
+  await enrichEntityIdsFromDb(r, dbPayload);
   if (r._dbId) {
     // .select() after .update() returns the rows that were affected. If RLS
     // silently blocks the update, this returns an empty array — we catch that
@@ -3975,12 +4074,15 @@ function renderRequesterDetail(reqId) {
               <div class="panel-body">
                 ${r.assignedRecruiters.map(id => {
                   const u = getUser(id);
+                  const uName = u?.name || 'Unknown';
+                  const uEmail = u?.email || '';
+                  const initials = getUserInitials(id);
                   return `
                     <div class="flex" style="align-items: center; gap: 0.6rem; padding: 0.4rem 0;">
-                      <div class="user-avatar" style="width: 32px; height: 32px; font-size: 0.75rem;">${getUserInitials(u.id)}</div>
+                      <div class="user-avatar" style="width: 32px; height: 32px; font-size: 0.75rem;">${initials}</div>
                       <div>
-                        <div style="font-weight: 500; font-size: 0.88rem;">${u.name}</div>
-                        <div class="text-xs text-muted">${u.email}</div>
+                        <div style="font-weight: 500; font-size: 0.88rem;">${uName}</div>
+                        <div class="text-xs text-muted">${uEmail}</div>
                       </div>
                     </div>
                   `;
@@ -5136,6 +5238,10 @@ function renderRecruiterDetail(reqId) {
   
   const requester = getUser(r.requesterId);
   const hm = getUser(r.hiringManagerId);
+  const requesterName = requester?.name || 'Unknown';
+  const requesterEmail = requester?.email || '';
+  const hmName = hm?.name || 'Unknown';
+  const hmEmail = hm?.email || '';
   const daysLeft = daysUntil(r.targetFillDate);
   const slaClass = daysLeft > 7 ? 'sla-good' : daysLeft > 3 ? 'sla-warning' : 'sla-bad';
   const isOnHold = r.status === 'on_hold';
@@ -5173,13 +5279,13 @@ function renderRecruiterDetail(reqId) {
             </div>
             <div>
               <div class="eyebrow">${t('th_requester')}</div>
-              <div style="font-weight: 500; margin-top: 0.25rem;">${requester.name}</div>
-              <div class="text-xs text-muted">${requester.email}</div>
+              <div style="font-weight: 500; margin-top: 0.25rem;">${requesterName}</div>
+              <div class="text-xs text-muted">${requesterEmail}</div>
             </div>
             <div>
               <div class="eyebrow">${t('lbl_hm')}</div>
-              <div style="font-weight: 500; margin-top: 0.25rem;">${hm.name}</div>
-              <div class="text-xs text-muted">${hm.email}</div>
+              <div style="font-weight: 500; margin-top: 0.25rem;">${hmName}</div>
+              <div class="text-xs text-muted">${hmEmail}</div>
             </div>
           </div>
         </div>
