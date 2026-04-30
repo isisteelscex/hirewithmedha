@@ -2517,8 +2517,10 @@ async function saveSingleCandidate(c) {
   const candPayload = {
     tenant_id: currentTenantId,
     full_name: c.name,
-    email: c.email,
-    phone: c.phone,
+    // ⭐ Coerce empty strings to null. The DB has a unique constraint on (tenant, email);
+    // sending '' for two empty-email candidates would falsely trigger a duplicate. NULL is ignored.
+    email: (c.email && String(c.email).trim()) ? String(c.email).trim() : null,
+    phone: (c.phone && String(c.phone).trim()) ? String(c.phone).trim() : null,
     source: (c.source || '').toLowerCase().replace(/ /g, '_') || 'other',
     cv_filename: c.cvFilename,
     notes: c.notes,
@@ -2651,8 +2653,9 @@ async function saveCandidates(list) {
     const candPayload = {
       tenant_id: currentTenantId,
       full_name: c.name,
-      email: c.email,
-      phone: c.phone,
+      // ⭐ Coerce empty strings to null (see saveSingleCandidate for rationale).
+      email: (c.email && String(c.email).trim()) ? String(c.email).trim() : null,
+      phone: (c.phone && String(c.phone).trim()) ? String(c.phone).trim() : null,
       source: (c.source || '').toLowerCase().replace(/ /g, '_') || 'other',
       cv_filename: c.cvFilename,
       notes: c.notes,
